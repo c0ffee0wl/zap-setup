@@ -4,19 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A single-purpose installer that fetches the latest **Zap** terminal `.deb` from `github.com/zerx-lab/zap`, installs it via `apt`, and writes three opinionated configs (theme, keybindings, settings.toml) targeting Terminator parity — specifically the effective Terminator keymap produced by `/opt/linux-setup/linux-setup.sh`. No build system, no tests; just a Bash script + three payload files in `configs/`.
+A single-purpose installer that fetches the latest **Zap** terminal `.deb` from `github.com/zerx-lab/zap`, installs it via `apt`, and writes three opinionated configs (theme, keybindings, settings.toml) targeting Terminator parity — specifically the effective Terminator keymap produced by `/opt/linux-setup/linux-setup.sh`. No build system, no tests; just a Bash script + shared helpers in `linux/common.sh` + three payload files in `linux/configs/`.
 
 The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint; the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
 
 ## Common commands
 
 ```bash
-./zap-setup.sh                       # interactive (default)
-./zap-setup.sh --force               # auto-Yes — answers Y to every overwrite prompt
-./zap-setup.sh --no                  # auto-No — preserves every existing config
-./zap-setup.sh --help
+./linux/setup.sh                       # interactive (default)
+./linux/setup.sh --force               # auto-Yes — answers Y to every overwrite prompt
+./linux/setup.sh --no                  # auto-No — preserves every existing config
+./linux/setup.sh --help
 
-bash -n zap-setup.sh                 # syntax check (do this before any edit to the .sh)
+bash -n linux/setup.sh && bash -n linux/common.sh   # syntax check (do this before any edit to either .sh)
 ```
 
 There are no tests. For end-to-end validation use the script's own re-run behavior: a second run with no upstream changes is a no-op (install step short-circuits on version match, prompts default to **N**).
@@ -32,7 +32,7 @@ rg -n -t rust 'toml_path:\s*"[^"]+"' /tmp/zap-src/app/src/
 
 ### Verbatim lifts from `/opt/linux-setup/linux-setup.sh`
 
-Several blocks in `zap-setup.sh` are **copied character-for-character** from the linux-setup script, each annotated with `# verbatim from linux-setup.sh:NNN-MMM`. Do **not** refactor or "improve" these — the whole point is that they evolve in lockstep with the upstream helper script. Carried-over quirks (e.g. `wc -l || echo "0"` printing a one-off `[: 0\n0: integer expected` when the local repo has no upstream) are intentionally preserved.
+Several blocks are **copied character-for-character** from the linux-setup script, each annotated with `# verbatim from linux-setup.sh:NNN-MMM`. Shared helpers (colors, `log`/`warn`/`error`, `backup_file`, `prompt_yes_no`) live in `linux/common.sh`; the remaining lifts (arg parsing, root + Debian preflight, Phase 0 self-update) live in `linux/setup.sh`. Do **not** refactor or "improve" these — the whole point is that they evolve in lockstep with the upstream helper script. `linux/common.sh` is a hosting location, not a refactoring layer. Carried-over quirks (e.g. `wc -l || echo "0"` printing a one-off `[: 0\n0: integer expected` when the local repo has no upstream) are intentionally preserved.
 
 ### Release-asset filter (do not loosen)
 
@@ -40,11 +40,11 @@ The Zap GitHub project publishes releases with the asset name `zap_*_amd64.deb`.
 
 ### `__HOME__` template substitution
 
-`configs/settings.toml` contains a literal `__HOME__` token in the theme `path = ...` field. The script renders it through `render_settings()` (a `sed "s|__HOME__|$HOME|g"` pipe) at install time. When adding new TOML keys that need an absolute path, reuse the same placeholder — do not invent a second one.
+`linux/configs/settings.toml` contains a literal `__HOME__` token in the theme `path = ...` field. The script renders it through `render_settings()` (a `sed "s|__HOME__|$HOME|g"` pipe) at install time. When adding new TOML keys that need an absolute path, reuse the same placeholder — do not invent a second one.
 
 ### Custom-theme selector — name string identity matters
 
-`appearance.themes.theme = { Custom = { name = "...", path = "..." } }` resolves against the in-memory theme registry that Zap builds by scanning `~/.local/share/zap/themes/*.yaml` at startup. The `name` value in `settings.toml` **must match the `name:` field inside the YAML file exactly** — that's the join key. Both `configs/terminator_black_on_white.yaml` and `configs/settings.toml` currently use `Terminator Black on White`; change them together or the theme silently falls back.
+`appearance.themes.theme = { Custom = { name = "...", path = "..." } }` resolves against the in-memory theme registry that Zap builds by scanning `~/.local/share/zap/themes/*.yaml` at startup. The `name` value in `settings.toml` **must match the `name:` field inside the YAML file exactly** — that's the join key. Both `linux/configs/terminator_black_on_white.yaml` and `linux/configs/settings.toml` currently use `Terminator Black on White`; change them together or the theme silently falls back.
 
 ### `install_with_prompt` (the only meaningful helper)
 

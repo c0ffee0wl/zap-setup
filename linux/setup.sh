@@ -5,22 +5,19 @@
 # the Terminator "Black on White" theme + Terminator-style keybindings
 # (mirroring /opt/linux-setup/linux-setup.sh's effective Terminator set).
 #
-# Helpers (set/colors/log/arg-parse/backup_file/prompt_yes_no/self-update
-# Phase 0) are lifted verbatim from /opt/linux-setup/linux-setup.sh — line
-# ranges annotated at each block.
+# Shared helpers (colors / log / backup_file / prompt_yes_no) live in
+# linux/common.sh — they're lifted verbatim from /opt/linux-setup/linux-setup.sh
+# and annotated there. The Phase 0 self-update block below is also a
+# verbatim lift.
 
 set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
 VERSION="0.1"
 FORCE_MODE=false
 NO_MODE=false
-
-# Colors for output (verbatim from linux-setup.sh:14-19)
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
 # Show usage information
 show_usage() {
@@ -71,20 +68,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Logging (verbatim from linux-setup.sh:106-118)
-log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARNING] $1${NC}"
-}
-
-error() {
-    echo -e "${RED}[ERROR] $1${NC}"
-    exit 1
-}
-
 # Check if running as root (verbatim from linux-setup.sh:121-123)
 if [[ $EUID -eq 0 ]]; then
     warn "This script should normally not be run as root. Please run as a regular user with sudo privileges."
@@ -94,51 +77,6 @@ fi
 if ! grep -qE "(debian|ID_LIKE.*debian)" /etc/os-release 2>/dev/null; then
     error "This script requires a Debian-based Linux distribution. Detected system is not compatible."
 fi
-
-# Backup a file with timestamp (verbatim from linux-setup.sh:131-138)
-backup_file() {
-    local file_path="$1"
-    if [ -f "$file_path" ]; then
-        local backup_path="${file_path}.backup.$(date +'%Y-%m-%d_%H-%M-%S')"
-        cp "$file_path" "$backup_path"
-        log "Backed up to: $backup_path"
-    fi
-}
-
-# Prompt user with yes/no question (verbatim from linux-setup.sh:143-173)
-# Usage: prompt_yes_no "Question?" "Y" (or "N" for default No)
-# Returns: 0 for yes, 1 for no
-prompt_yes_no() {
-    local prompt="$1"
-    local default="$2"
-    local response
-
-    # In force mode, automatically answer yes
-    if [[ "$FORCE_MODE" == "true" ]]; then
-        log "Force mode: Auto-answering 'Yes' to: $prompt"
-        return 0
-    fi
-
-    # In no mode, automatically answer no
-    if [[ "$NO_MODE" == "true" ]]; then
-        log "No mode: Auto-answering 'No' to: $prompt"
-        return 1
-    fi
-
-    if [[ "$default" == "Y" ]]; then
-        read -p "$prompt (Y/n): " response
-        response=${response:-Y}
-    else
-        read -p "$prompt (y/N): " response
-        response=${response:-N}
-    fi
-
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
 
 # Zap config paths (XDG, matching desktop ID dev.zap.Zap; the Linux project
 # dir name is lowercased to "zap" — see crates/warp_core/src/paths.rs:243-246
@@ -153,7 +91,7 @@ THEMES_DIR="$HOME/.local/share/zap/themes"
 # and Zap's read on startup.
 ZAP_KEYRING_SERVICE="dev.zap.Zap"
 ZAP_KEYRING_KEY="AgentProviderSecrets"
-LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in configs/settings.toml
+LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in linux/configs/settings.toml
 
 #############################################################################
 # PHASE 0: Self-Update (verbatim from linux-setup.sh:483-512)
@@ -161,10 +99,8 @@ LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in configs/setti
 
 log "Checking for script updates..."
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
+# git rev-parse/fetch/pull auto-traverse to the repo root, so no `cd` needed.
+# Re-exec below uses the absolute "$SCRIPT_DIR/setup.sh" path, also cwd-agnostic.
 if git rev-parse --git-dir > /dev/null 2>&1; then
     log "Git repository detected, checking for updates..."
 
@@ -178,7 +114,9 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
         log "Updates found! Pulling latest changes..."
         git pull --ff-only
         log "Re-executing updated script..."
-        exec "$0" "${ORIGINAL_ARGS[@]}" || error "Failed to re-execute updated script"
+        # Re-exec via $SCRIPT_DIR (absolute) rather than $0 so resolution
+        # is independent of the user's invocation cwd and any future `cd`.
+        exec "$SCRIPT_DIR/setup.sh" "${ORIGINAL_ARGS[@]}" || error "Failed to re-execute updated script"
     else
         log "Script is up to date"
     fi
@@ -304,8 +242,15 @@ if [ -n "${LITELLM_API_KEY:-}" ]; then
     else
         existing=$(secret-tool lookup service "$ZAP_KEYRING_SERVICE" key "$ZAP_KEYRING_KEY" 2>/dev/null || true)
         [ -n "$existing" ] || existing='{}'
+        # If $existing is not valid JSON, jq fails inside this $(...) but
+        # `set -e` does not propagate command-substitution failures (no
+        # `inherit_errexit`), so $merged ends up empty. Guarding below
+        # prevents an empty store call from wiping every other provider's
+        # key under the same service.
         merged=$(printf '%s' "$existing" | jq --arg id "$LITELLM_PROVIDER_ID" --arg k "$LITELLM_API_KEY" '. + {($id): $k}')
-        if printf '%s' "$merged" | secret-tool store \
+        if [ -z "$merged" ]; then
+            warn "Refusing to write keyring: jq merge produced empty value (existing keyring entry is likely not valid JSON). Other providers' keys preserved."
+        elif printf '%s' "$merged" | secret-tool store \
                 --label="Zap: $ZAP_KEYRING_KEY" \
                 service "$ZAP_KEYRING_SERVICE" \
                 key "$ZAP_KEYRING_KEY"; then
