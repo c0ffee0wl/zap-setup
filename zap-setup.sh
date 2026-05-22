@@ -232,6 +232,9 @@ install_zap_from_github() {
     tmp=$(mktemp --suffix=.deb)
     trap 'rm -f "$tmp"' RETURN
     curl --proto '=https' --tlsv1.2 -fSL --progress-bar -o "$tmp" "$url"
+    # mktemp creates 0600; relax so the _apt sandbox user can read the file
+    # (otherwise apt falls back to unsandboxed root fetch and prints a notice).
+    chmod 0644 "$tmp"
     sudo apt-get install -y "$tmp"
 }
 
