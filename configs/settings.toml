@@ -11,8 +11,11 @@
 automatic_updates_enabled = false
 
 # Denser overall UI — less inter-element whitespace, more rows on screen.
+# Pin UI language to English so the locale doesn't follow the system
+# (key + enum verified in app/src/settings/language.rs).
 [appearance]
-spacing = "compact"
+spacing  = "compact"
+language = "english"
 
 # Font — keys verified in app/src/settings/font.rs (Zap source).
 [appearance.text]
@@ -112,6 +115,12 @@ enabled = false
 
 [agents.voice]
 voice_input_enabled = false
+
+# Hide agent reasoning blocks entirely — keeps the transcript focused on
+# the actual answer. Enum verified in app/src/settings/ai.rs:349 (variants
+# show_and_collapse / always_show / never_show, snake_case).
+[agents.warp_agent.other]
+thinking_display_mode = "never_show"
 
 # Stretch toast duration to 8 s (default is shorter); useful for the
 # longer agent / provider notifications.
