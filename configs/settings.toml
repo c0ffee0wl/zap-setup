@@ -77,11 +77,6 @@ alt_screen_padding = { custom = { uniform_padding = 8.0 } }
 [appearance.window]
 zoom_level = 125
 
-# Hide the horizontal dividers between command blocks — cleaner, more
-# like a plain terminal.
-[appearance.blocks]
-show_block_dividers = false
-
 # Always show the workspace decoration in the tab bar (vs auto-hide).
 [appearance.tabs]
 workspace_decoration_visibility = "always_show"
