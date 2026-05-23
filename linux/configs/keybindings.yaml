@@ -19,12 +19,19 @@
 #   Zap.
 ---
 
-# Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0)
+# Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
+# Three parallel action triplets all bound to the same chord — Zap
+# dispatches to whichever view owns focus (terminal font, workspace UI
+# scale, notebook font).
 "workspace:increase_font_size":                    ctrl-+
 "workspace:decrease_font_size":                    ctrl--
 "workspace:reset_font_size":                       ctrl-0
 "workspace:increase_zoom":                         ctrl-+
+"workspace:decrease_zoom":                         ctrl--
+"workspace:reset_zoom":                            ctrl-0
 "notebookview:increase_font_size":                 ctrl-+
+"notebookview:decrease_font_size":                 ctrl--
+"notebookview:reset_font_size":                    ctrl-0
 
 # Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+R)
 "workspace:new_tab":                               ctrl-t
@@ -75,6 +82,14 @@
 "code_editor:find":                                ctrl-f
 "terminal:copy":                                   ctrl-shift-C
 "terminal:paste":                                  ctrl-shift-V
+
+# Terminal reset (mirrors Terminator's default `reset = Ctrl+Shift+R`;
+# Zap has only the one clear action, no separate reset_clear analogue).
+"terminal:clear_blocks":                           ctrl-shift-R
+
+# Beyond Terminator (productivity add, reachable because linux-setup
+# moved search off Ctrl+Shift+F onto Ctrl+F).
+"workspace:show_global_search":                    ctrl-shift-F
 
 # Settings
 "workspace:show_settings_keyboard_shortcuts_page": ctrl-shift-K
