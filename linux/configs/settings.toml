@@ -117,6 +117,28 @@ voice_input_enabled = false
 [agents.warp_agent.other]
 thinking_display_mode = "never_show"
 
+[agents.third_party]
+
+# Register Claude Code (and the `blaude` alias) with Zap's third-party CLI
+# agent toolbar — when the running foreground command matches, Zap shows
+# the dedicated Claude footer (rich input, plugin chip, etc.) instead of
+# treating the process as an opaque TTY.
+#
+# Key is a regex; value is the agent label rendered in the toolbar.
+# The map type accepts both `{ pattern = "Label" }` and a bare array of
+# patterns.
+# Single-quoted (TOML literal) so the `\s` escape is preserved verbatim
+# and doesn't have to be doubled.
+# Pattern breakdown:
+#   (^|/)              — start of line OR after a path separator (so
+#                        `/usr/local/bin/claude` and `claude` both match,
+#                        but `myclaude` does not)
+#   (claude|blaude)    — the binary name; `blaude` is the user's local
+#                        alias / wrapper for claude
+#   (\s|$)             — followed by whitespace (args) or end of line
+[agents.third_party.cli_agent_toolbar_enabled_commands]
+'(^|/)(claude|blaude)(\s|$)' = "Claude"
+
 # Stretch toast duration to 8 s (default is shorter); useful for the
 # longer agent / provider notifications.
 [notifications]
