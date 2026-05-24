@@ -92,16 +92,39 @@ focus_pane_on_hover = true
 # Model `id` values use LiteLLM's `provider/model` routing form so the
 # proxy dispatches to the right Azure deployment; `name` is the
 # human-readable label shown in the provider picker.
-[[agents.warp_agent.providers]]
-id        = "litellm-local"
-name      = "LiteLLM (local)"
-api_type  = "open_ai"
-kind      = "open_ai_compatible"
-base_url  = "http://127.0.0.1:4000/v1/"
-
-[[agents.warp_agent.providers.models]]
-name = "Azure GPT 5.4 mini"
-id   = "azure/gpt-5.4-mini"
+#
+# Written as a multi-line inline-table array (not a [[...]] array-of-tables)
+# to match Zap's own serializer output — same rationale as the theme block
+# above: it keeps re-runs from showing a spurious "overwrite?" diff after Zap
+# rewrites the file on first save. Keys are alphabetized for the same reason.
+#
+# Per-model capability metadata (AgentProviderModel, app/src/settings/ai.rs:867):
+# context_window / max_output_tokens are token budgets (0 = unknown);
+# reasoning enables CoT; image/pdf/audio are tri-state force flags
+# (present = override models.dev inference, absent = auto). tool_call
+# defaults to true, so it's omitted.
+[agents.warp_agent]
+providers = [
+  {
+    api_type = "open_ai",
+    base_url = "http://127.0.0.1:4000/v1/",
+    id = "litellm-local",
+    kind = "open_ai_compatible",
+    models = [
+      {
+        audio = false,
+        context_window = 400000,
+        id = "azure/gpt-5.4-mini",
+        image = true,
+        max_output_tokens = 128000,
+        name = "Azure GPT 5.4 mini",
+        pdf = true,
+        reasoning = true,
+      },
+    ],
+    name = "LiteLLM (local)",
+  },
+]
 
 # Disable proactive Active AI (the always-on assistant) — too intrusive
 # for a Terminator-style terminal. Voice input also off.
