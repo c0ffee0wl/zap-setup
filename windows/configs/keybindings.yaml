@@ -4,19 +4,18 @@
 # Zap-specific unbinds the live config writes.
 #
 # Keymap engine notes:
-# - `cmd-*` is the Mac-default modifier; on Linux it transparently maps
-#   to the Super / Windows key. Use `cmd-*` for cross-platform bindings.
-# - `logo-*` is the Linux-native name for the Super key. Both forms work.
-#   Zap's UI tends to write whichever matches the action's default
-#   platform: `cmd-y` for split-down (Warp's Mac default) but `logo-r`
-#   for rename-tab. Keep whatever the live config produces.
+# - Valid modifiers are exactly: ctrl, alt, shift, cmd, meta, cmdorctrl
+#   (crates/warpui_core/src/keymap.rs:909-920). There is NO `logo`/`super`
+#   token — `cmd-*` is the cross-platform primary modifier (Cmd on Mac,
+#   Super on Linux, the Windows key here); `cmdorctrl` = Ctrl on Windows.
 # - `shift+letter` must be uppercase (ctrl-shift-N, not ctrl-shift-n).
 # - `none` removes a binding.
 #
-# Environment caveats:
-# - XFCE Whisker often maps Super_L to its menu — remove that binding in
-#   Xubuntu's Keyboard settings, otherwise cmd-* / logo-* won't reach
-#   Zap.
+# Windows caveat:
+# - A bare `cmd-<letter>` resolves to Win+<letter>, and Windows reserves some
+#   of those at the OS level (Win+E = Explorer, Win+A = Action Center) so they
+#   never reach an app. The split/rename bindings below therefore use
+#   `ctrl-cmd-<letter>` (Ctrl+Win+<letter>), which Windows does not reserve.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
@@ -37,7 +36,11 @@
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none
-"workspace:close_window":                          ctrl-shift-logo-D
+# Ctrl+Shift+Q = close window (Terminator's close-window chord). The Linux
+# config uses `ctrl-shift-logo-D`, but `logo` is not a valid Zap modifier, so
+# that binding never parses — and Win-key chords are largely OS-reserved on
+# Windows anyway. Use a plain ctrl-shift chord here.
+"workspace:close_window":                          ctrl-shift-Q
 "workspace:activate_next_tab":                     ctrl-tab
 "workspace:activate_prev_tab":                     ctrl-shift-tab
 "workspace:activate_first_tab":                    ctrl-1
@@ -50,11 +53,13 @@
 "workspace:activate_eighth_tab":                   none
 "workspace:move_tab_right":                        ctrl-shift-pagedown
 "workspace:move_tab_left":                         ctrl-shift-pageup
-"workspace:rename_active_tab":                     cmd-e
+"workspace:rename_active_tab":                     ctrl-cmd-e
 
-# Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav + resize)
-"pane_group:add_down":                             cmd-y
-"pane_group:add_right":                            cmd-a
+# Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav +
+# resize). On Windows the bare Win+<letter> forms are OS-reserved, so we prefix
+# Ctrl (Ctrl+Win+<letter>) — see the Windows caveat in the header.
+"pane_group:add_down":                             ctrl-cmd-y
+"pane_group:add_right":                            ctrl-cmd-a
 "pane_group:add_up":                               none
 "pane_group:add_left":                             none
 "pane_group:close_current_session":                none
