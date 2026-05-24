@@ -8,6 +8,8 @@ A single-purpose installer that fetches the latest **Zap** terminal `.deb` from 
 
 The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint; the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
 
+There is also a **Windows (PowerShell) port** under `windows/` — `setup.ps1` + `common.ps1` + `windows/configs/`. It mirrors the Linux phases but installs `ZapSetup.exe` (Inno Setup) silently, writes to Zap's Windows paths, and differs deliberately: built-in **Dracula** theme (no theme YAML), no font-family override, a `powershell.exe` session-shell override, the `dx_12` graphics backend, a bash-style Ctrl+D PowerShell handler, and an optional **Azure** provider whose key it writes to Zap's DPAPI secrets file. See the "Windows port" section below.
+
 ## Common commands
 
 ```bash
@@ -18,6 +20,20 @@ The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (Li
 
 bash -n linux/setup.sh && bash -n linux/common.sh   # syntax check (do this before any edit to either .sh)
 ```
+
+Windows port (run on Windows; on Linux use `pwsh` only to lint):
+
+```powershell
+.\windows\setup.ps1                    # interactive (default)
+.\windows\setup.ps1 -Force             # auto-Yes (aliases -f -yes -y)
+.\windows\setup.ps1 -No                # auto-No  (alias -n)
+.\windows\setup.ps1 -Help
+
+# parse-check (no execution) — do this before any edit to either .ps1:
+pwsh -NoProfile -Command '$e=$null;[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path windows/setup.ps1),[ref]$null,[ref]$e);$e'
+```
+
+Validate any `settings.toml` change with **Zap's own parser** — `toml_edit = "0.25.5"`, NOT Python `tomllib` or the `toml` crate. Zap loads settings via `toml_edit` (`crates/warpui_extras/src/user_preferences/toml_backed.rs`), which accepts the multi-line inline-table-with-trailing-commas form (TOML 1.1) that strict 1.0 parsers reject. A throwaway `cargo` bin depending on `toml_edit = "0.25.5"` that does `s.parse::<toml_edit::DocumentMut>()` is the correct check.
 
 There are no tests. For end-to-end validation use the script's own re-run behavior: a second run with no upstream changes is a no-op (install step short-circuits on version match, prompts default to **N**).
 
@@ -78,3 +94,35 @@ Zap loads MCP server definitions from `~/.zap/.mcp.json` at startup and re-reads
 - URL/SSE entries use `url` (Zap also accepts the `serverUrl` alias, but use canonical `url` so Zap's own serializer doesn't rewrite-and-diff on first save).
 - Each server has exactly one of `command` (stdio) or `url` (HTTP/SSE) — validated in `app/src/ai/agent_sdk/mcp_config.rs`.
 - **Do not bundle MCPs that require auth headers.** Zap has no keyring slot for MCP headers, so a token in `headers.Authorization` would land in a world-readable JSON file. Servers like GitHub/Linear/Sentry stay user-added, not bundled.
+
+## Windows port (`windows/`)
+
+`windows/setup.ps1` mirrors `linux/setup.sh` phase-for-phase; `windows/common.ps1` mirrors `common.sh` (`Write-Log`/`Write-Warn`/`Write-Err`, `Backup-File`, `Confirm-YesNo`, `Install-WithPrompt`). `windows/configs/keybindings.yaml` and `windows/configs/mcp.json` are **byte-identical copies** of the Linux payloads (the keymap's `cmd-*` maps to the Win key on Windows); only `windows/configs/settings.toml` is Windows-specific. There is no theme YAML — Dracula is built in.
+
+### Install mechanism
+
+The Windows asset is **`ZapSetup.exe`** (Inno Setup), not a `.deb`. Older releases shipped `OpenWarpSetup.exe`, so the asset filter pins `^ZapSetup\.exe$` and walks `releases?per_page=30` newest-first — the same anti-rename-trap discipline as the `.deb` filter. Install is silent + per-user (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, `PrivilegesRequired=lowest` → no admin). Version short-circuit reads `DisplayVersion` from the Inno per-user uninstall key `HKCU:\…\Uninstall\zap-oss_is1` (OSS channel `AppId=zap-oss`).
+
+### Windows paths (verified against `crates/warp_core/src/paths.rs`)
+
+`ProjectDirs::from("dev","zap","Zap")` (no lowercasing — that branch is Linux-only):
+
+- `settings.toml`, `keybindings.yaml` → `%LOCALAPPDATA%\zap\Zap\config\` (`config_local_dir()`)
+- `.mcp.json` → `%USERPROFILE%\.zap\.mcp.json` (`warp_home_mcp_config_file_path()`, OSS dir `.zap`; `-<profile>` suffix when `WARP_DATA_PROFILE` is set)
+- API-key store → `%LOCALAPPDATA%\zap\Zap\data\dev.zap.Zap-AgentProviderSecrets` (`state_dir()` → `data_local_dir()`)
+
+### API keys: DPAPI file, NOT Credential Manager
+
+On Windows Zap stores provider keys in a single **DPAPI-encrypted file** (`crates/warpui_extras/src/secure_storage/windows.rs`), not the Credential Manager. Filename `{service}-{key}` = `dev.zap.Zap-AgentProviderSecrets`; plaintext is `serde_json` of `HashMap<provider_id, api_key>`. Encryption is `CryptProtectData` with **no entropy, flags 0 (CurrentUser scope)** and a cosmetic description that decrypt ignores — so PowerShell writes it with `[System.Security.Cryptography.ProtectedData]::Protect($utf8Bytes, $null, 'CurrentUser')`, no Win32 interop. `Write-AzureKeyToDpapi` read-merge-writes (mirrors the Linux Phase 4 jq merge) so other providers' keys survive.
+
+### `dx_12` — convert_case, not serde
+
+`[system] preferred_graphics_backend = "dx_12"` (with the underscore). `settings.toml` is serialized by the `settings_value::SettingsValue` derive, which uses `convert_case` `Case::Snake` (`crates/settings_value_derive/src/lib.rs`), NOT serde — and convert_case inserts a boundary at the lower→digit transition, so `GraphicsBackend::Dx12` → `dx_12`. The `rename_all="snake_case"` on the enum is `schemars`-only. **For any enum-valued key with digits/acronyms, derive the literal from convert_case (or copy what Zap's GUI writes), never serde's `snake_case`.**
+
+### Azure provider — v1 route only
+
+Zap's genai adapter (`lib/rust-genai/src/adapter/adapters/openai/adapter_shared.rs`) builds the URL as `base_url.join("chat/completions")` and sends auth **only** as `Authorization: Bearer`. So the Azure base_url must be the OpenAI-compatible **v1** form `https://<resource>.<host>/openai/v1/` (Bearer-with-resource-key is the documented OpenAI-SDK pattern). The classic `…/openai/deployments/{name}/chat/completions?api-version=…` route is incompatible — it needs the `api-key` header (→ 401) and a different path shape. The v1 route is documented on `openai.azure.com`/`services.ai.azure.com`; for a pasted `cognitiveservices.azure.com` host the installer probes `…/openai/v1/models` with the key and falls back to the `openai.azure.com`/`services.ai.azure.com` siblings on 404. The injected provider uses the multi-line inline-table `[agents.warp_agent] providers = [ … ]` form (keys alphabetical, trailing commas) Zap's serializer writes; model fields are verified against `AgentProviderModel` (`app/src/settings/ai.rs`).
+
+### Sentinel-delimited injected blocks
+
+The Ctrl+D profile handler (Windows PowerShell 5.1 always; PowerShell 7+ if `pwsh` present) and the Azure provider TOML are each wrapped in `# >>> zap-setup … >>>` / `# <<< zap-setup … <<<` markers and regenerated in place, so re-runs replace rather than duplicate. The Ctrl+D handler is bash-faithful (exit only on an empty prompt) — Zap forwards Ctrl+D to the PTY as EOT and PowerShell, unlike bash, doesn't exit on it.

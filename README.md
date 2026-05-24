@@ -4,6 +4,8 @@ Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetc
 
 Runs on Debian and Kali (Bash) as a regular user. amd64 only; Zap publishes no arm64 `.deb`.
 
+There is also a Windows (PowerShell) installer under `windows/` — see [Windows](#windows) below.
+
 ## Quick Start
 
 ```bash
@@ -61,3 +63,48 @@ Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► A
 `setup.sh` is safe to re-run. A second invocation with no upstream changes is a no-op: the `.deb` install short-circuits on version match (`dpkg-query` compares the installed version against the tag from the GitHub release record), and every overwrite prompt defaults to **N**. Existing configs are never replaced without a timestamped backup; in interactive mode the prompt defaults to N, so a no-flag re-run preserves everything. Under `--force` the previous file is still copied to `<path>.backup.YYYY-MM-DD_HH-MM-SS` before the overwrite.
 
 Zap updates are managed by re-running this installer. There is no `apt upgrade` path because the `.deb` postinst does not register an APT repo.
+
+## Windows
+
+A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider — writing the API key straight to where Zap reads it.
+
+Requires Windows 10 build 18362+ (ConPTY). x64.
+
+```powershell
+git clone https://github.com/c0ffee0wl/zap-setup $env:USERPROFILE\zap-setup
+cd $env:USERPROFILE\zap-setup
+.\windows\setup.ps1
+```
+
+If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.cognitiveservices.azure.com/`) and API key. The script normalizes it to the OpenAI-compatible v1 base URL (`…/openai/v1/`), probes it (falling back to the `openai.azure.com` host if the cognitiveservices host doesn't serve the v1 route), writes the provider into `settings.toml`, and stores the key in Zap's DPAPI secrets file — so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
+
+### Setup modes
+
+| Command | What happens |
+|---|---|
+| `.\windows\setup.ps1` | Interactive. Prompts (default **N**) before overwriting any existing config; offers the Azure provider dialog |
+| `.\windows\setup.ps1 -Force` | Non-interactive, answer **Yes** to overwrites (aliases: `-f`, `-yes`, `-y`). Azure configured only if `ZAP_AZURE_*` env vars are set |
+| `.\windows\setup.ps1 -No` | Non-interactive, answer **No**; skips the Azure step (alias: `-n`) |
+| `.\windows\setup.ps1 -Help` | Show usage and exit (alias: `-h`) |
+
+For a non-interactive Azure setup, set `ZAP_AZURE_ENDPOINT` and `ZAP_AZURE_API_KEY` before running.
+
+### Layout
+
+```
+%LOCALAPPDATA%\zap\Zap\config\settings.toml      (theme, shell override, dx_12, providers)
+%LOCALAPPDATA%\zap\Zap\config\keybindings.yaml   (Terminator-parity bindings)
+%USERPROFILE%\.zap\.mcp.json                      (MCP servers: microsoft-learn, deepwiki)
+%LOCALAPPDATA%\zap\Zap\data\dev.zap.Zap-AgentProviderSecrets   (DPAPI-encrypted {provider-id: key})
+Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1   (Ctrl+D handler; also Documents\PowerShell\ for pwsh)
+```
+
+Windows-specific notes:
+
+- **No Credential Manager.** Zap stores provider API keys as a single DPAPI-encrypted file (`CryptProtectData`, CurrentUser scope, no entropy) — not in the Credential Manager. The installer writes it with .NET `ProtectedData.Protect`, read-merging any existing entries so other providers' keys aren't clobbered.
+- **`dx_12`, not `dx12`.** Zap serializes the graphics-backend enum via `convert_case` (which splits `Dx12` at the letter→digit boundary), so the literal is `dx_12` — matching exactly what Zap's GUI writes.
+- **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer` and appends `chat/completions` to `base_url`, so only the `…/openai/v1/` form works; the classic `…/openai/deployments/{name}/chat/completions?api-version=…` route (which expects the `api-key` header) would return 401.
+- **Ctrl+D.** Zap forwards Ctrl+D to the PTY as EOF; bash exits on an empty line, PowerShell does not. The installed handler replicates bash: Ctrl+D on an empty prompt runs `exit` (closing the pane), otherwise deletes the char under the cursor. It is written into both the Windows PowerShell 5.1 profile and (if `pwsh` is installed) the PowerShell 7+ profile.
+- **Dracula is built in** — no theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
+
+Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.

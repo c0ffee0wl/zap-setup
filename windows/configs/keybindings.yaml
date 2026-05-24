@@ -1,0 +1,106 @@
+# Zap keybindings mirroring the effective Terminator set after
+# /opt/linux-setup/linux-setup.sh is applied — Terminator defaults
+# UNION linux-setup overrides MINUS explicit unbinds — plus a few
+# Zap-specific unbinds the live config writes.
+#
+# Keymap engine notes:
+# - `cmd-*` is the Mac-default modifier; on Linux it transparently maps
+#   to the Super / Windows key. Use `cmd-*` for cross-platform bindings.
+# - `logo-*` is the Linux-native name for the Super key. Both forms work.
+#   Zap's UI tends to write whichever matches the action's default
+#   platform: `cmd-y` for split-down (Warp's Mac default) but `logo-r`
+#   for rename-tab. Keep whatever the live config produces.
+# - `shift+letter` must be uppercase (ctrl-shift-N, not ctrl-shift-n).
+# - `none` removes a binding.
+#
+# Environment caveats:
+# - XFCE Whisker often maps Super_L to its menu — remove that binding in
+#   Xubuntu's Keyboard settings, otherwise cmd-* / logo-* won't reach
+#   Zap.
+---
+
+# Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
+# Three parallel action triplets all bound to the same chord — Zap
+# dispatches to whichever view owns focus (terminal font, workspace UI
+# scale, notebook font).
+"workspace:increase_font_size":                    ctrl-+
+"workspace:decrease_font_size":                    ctrl--
+"workspace:reset_font_size":                       ctrl-0
+"workspace:increase_zoom":                         ctrl-+
+"workspace:decrease_zoom":                         ctrl--
+"workspace:reset_zoom":                            ctrl-0
+"notebookview:increase_font_size":                 ctrl-+
+"notebookview:decrease_font_size":                 ctrl--
+"notebookview:reset_font_size":                    ctrl-0
+
+# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+R)
+"workspace:new_tab":                               ctrl-t
+"workspace:new_window":                            ctrl-shift-I
+"workspace:close_active_tab":                      none
+"workspace:close_window":                          ctrl-shift-logo-D
+"workspace:activate_next_tab":                     ctrl-tab
+"workspace:activate_prev_tab":                     ctrl-shift-tab
+"workspace:activate_first_tab":                    ctrl-1
+"workspace:activate_second_tab":                   ctrl-2
+"workspace:activate_third_tab":                    ctrl-3
+"workspace:activate_fourth_tab":                   ctrl-4
+"workspace:activate_fifth_tab":                    ctrl-5
+"workspace:activate_sixth_tab":                    ctrl-6
+"workspace:activate_seventh_tab":                  none
+"workspace:activate_eighth_tab":                   none
+"workspace:move_tab_right":                        ctrl-shift-pagedown
+"workspace:move_tab_left":                         ctrl-shift-pageup
+"workspace:rename_active_tab":                     cmd-e
+
+# Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav + resize)
+"pane_group:add_down":                             cmd-y
+"pane_group:add_right":                            cmd-a
+"pane_group:add_up":                               none
+"pane_group:add_left":                             none
+"pane_group:close_current_session":                none
+"pane_group:navigate_up":                          alt-up
+"pane_group:navigate_down":                        alt-down
+"pane_group:navigate_left":                        alt-left
+"pane_group:navigate_right":                       alt-right
+"pane_group:navigate_next":                        ctrl-shift-N
+"pane_group:navigate_prev":                        ctrl-shift-P
+"pane_group:resize_up":                            ctrl-shift-up
+"pane_group:resize_down":                          ctrl-shift-down
+"pane_group:resize_left":                          ctrl-shift-left
+"pane_group:resize_right":                         ctrl-shift-right
+"pane_group:toggle_maximize_pane":                 ctrl-shift-X
+
+# Window
+"root_view:toggle_fullscreen":                     f11
+"workspace:hide_warp":                             ctrl-shift-alt-A
+
+# Search / edit (linux-setup override: Ctrl+F instead of Ctrl+Shift+F).
+# The three *_find actions are bound to the same chord so Ctrl+F opens
+# search in the terminal, the editor pane, and the code-editor pane alike.
+"terminal:find":                                   ctrl-f
+"editor:find":                                     ctrl-f
+"code_editor:find":                                ctrl-f
+"terminal:copy":                                   ctrl-shift-C
+"terminal:paste":                                  ctrl-shift-V
+
+# Terminal reset (mirrors Terminator's default `reset = Ctrl+Shift+R`;
+# Zap has only the one clear action, no separate reset_clear analogue).
+"terminal:clear_blocks":                           ctrl-shift-R
+
+# Beyond Terminator (productivity add, reachable because linux-setup
+# moved search off Ctrl+Shift+F onto Ctrl+F).
+"workspace:show_global_search":                    ctrl-shift-F
+
+# Settings
+"workspace:show_settings_keyboard_shortcuts_page": ctrl-shift-K
+
+# Zap-specific defaults we explicitly disable (these have no
+# Terminator analogue and the user doesn't want them firing on stray
+# keystrokes). Kept in the file so re-runs don't see them re-appear.
+"editor_view:underline":                           none
+"editor_view:right":                               none
+"terminal:select_bookmark_up":                     none
+"terminal:select_bookmark_down":                   none
+"ai_assistant_panel:reset_context":                none
+"code_view:close_saved_tabs":                      none
+"code_view:close_all_tabs":                        none
