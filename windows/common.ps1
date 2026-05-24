@@ -6,10 +6,10 @@
 # This mirrors linux/common.sh (log / warn / error, backup_file,
 # prompt_yes_no, install_with_prompt). The Linux helpers are themselves
 # verbatim lifts from /opt/linux-setup/linux-setup.sh; keep the two ports
-# behaviourally in lockstep — same prompts, same default-No, same timestamped
+# behaviourally in lockstep - same prompts, same default-No, same timestamped
 # backups, same Force/No mode semantics.
 
-# Source guard — prevent double dot-sourcing.
+# Source guard - prevent double dot-sourcing.
 if ($script:ZapCommonSourced) { return }
 $script:ZapCommonSourced = $true
 

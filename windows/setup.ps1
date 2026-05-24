@@ -88,7 +88,7 @@ ZAP_AZURE_API_KEY before running.
 if ($Help) { Show-Usage; exit 0 }
 
 #############################################################################
-# Constants — Zap Windows layout (verified against the Zap source).
+# Constants - Zap Windows layout (verified against the Zap source).
 #############################################################################
 
 $Repo             = 'zerx-lab/zap'
@@ -118,7 +118,7 @@ $SecretsFile        = Join-Path $StateDir "$SecretsServiceName-$SecretsKey"
 $AzureProviderId    = 'azure-openai'
 
 #############################################################################
-# Phase 2 helpers — install Zap from GitHub
+# Phase 2 helpers - install Zap from GitHub
 #############################################################################
 
 function Get-InstalledZapVersion {
@@ -188,7 +188,7 @@ function Install-Zap {
 }
 
 #############################################################################
-# Phase 4 helper — bash-style Ctrl+D handler in the PowerShell profiles
+# Phase 4 helper - bash-style Ctrl+D handler in the PowerShell profiles
 #############################################################################
 
 function Set-CtrlDHandlers {
@@ -201,7 +201,7 @@ function Set-CtrlDHandlers {
 # Bash-style Ctrl+D: exit only on an EMPTY prompt; otherwise delete the char
 # under the cursor. Zap forwards Ctrl+D to the PTY as EOT (end-of-transmission);
 # bash exits on it, PowerShell does not, so we replicate it here. Managed by
-# zap-setup — content between the markers is regenerated on each run.
+# zap-setup - content between the markers is regenerated on each run.
 if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     Set-PSReadLineKeyHandler -Chord 'Ctrl+d' -ScriptBlock {
         $line = ''; $cursor = 0
@@ -220,9 +220,9 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     # Documents may be redirected (e.g. OneDrive); GetFolderPath honors that.
     $docs = [Environment]::GetFolderPath('MyDocuments')
     $targets = @()
-    # Windows PowerShell 5.1 — always (it is the configured session shell).
+    # Windows PowerShell 5.1 - always (it is the configured session shell).
     $targets += (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
-    # PowerShell 7+ — only if pwsh is installed.
+    # PowerShell 7+ - only if pwsh is installed.
     if (Get-Command pwsh -ErrorAction SilentlyContinue) {
         $targets += (Join-Path $docs 'PowerShell\Microsoft.PowerShell_profile.ps1')
     }
@@ -245,7 +245,7 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
 }
 
 #############################################################################
-# Phase 5 helpers — Azure opt-in (dialogs, endpoint probe, TOML, DPAPI)
+# Phase 5 helpers - Azure opt-in (dialogs, endpoint probe, TOML, DPAPI)
 #############################################################################
 
 function Read-DialogText {
@@ -336,7 +336,7 @@ function Resolve-AzureBaseUrl {
         switch (Test-AzureEndpoint -BaseUrl $candidate -Key $Key) {
             'ok'   { Write-Log "Azure endpoint verified: $candidate"; return $candidate }
             'auth' {
-                Write-Warn "Azure endpoint $candidate is reachable but the key was rejected (401/403). Using it anyway — fix the key/role in the Azure portal."
+                Write-Warn "Azure endpoint $candidate is reachable but the key was rejected (401/403). Using it anyway - fix the key/role in the Azure portal."
                 return $candidate
             }
             'notfound' { Write-Warn "v1 route not served on host '$h' (404)."; continue }
@@ -344,7 +344,7 @@ function Resolve-AzureBaseUrl {
         }
     }
     $fallback = & $build $candidates[0]
-    Write-Warn "Endpoint probing was inconclusive; writing '$fallback' — verify it in Zap."
+    Write-Warn "Endpoint probing was inconclusive; writing '$fallback' - verify it in Zap."
     return $fallback
 }
 
@@ -396,7 +396,7 @@ function Write-AzureKeyToDpapi {
     param([string]$Key)
     # Windows PowerShell 5.1 needs System.Security loaded for ProtectedData;
     # on PowerShell 7+ the type ships in a separate, already-available assembly
-    # and this name may not resolve — tolerate that and rely on the type below.
+    # and this name may not resolve - tolerate that and rely on the type below.
     try { Add-Type -AssemblyName System.Security -ErrorAction Stop } catch { }
     $dir = Split-Path -Parent $SecretsFile
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -435,7 +435,7 @@ function Invoke-AzureOptIn {
 
     if ($envKey) {
         if (-not $envEndpoint) {
-            Write-Warn "ZAP_AZURE_API_KEY is set but ZAP_AZURE_ENDPOINT is not — skipping Azure setup."
+            Write-Warn "ZAP_AZURE_API_KEY is set but ZAP_AZURE_ENDPOINT is not - skipping Azure setup."
             return $false
         }
         $endpoint = $envEndpoint; $key = $envKey
@@ -443,7 +443,7 @@ function Invoke-AzureOptIn {
     }
     elseif ($script:ZapNoMode) { return $false }
     elseif ($script:ZapForceMode) {
-        Write-Warn "Force mode without ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY — skipping Azure provider setup."
+        Write-Warn "Force mode without ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY - skipping Azure provider setup."
         return $false
     }
     elseif (-not [Environment]::UserInteractive) { return $false }
@@ -451,9 +451,9 @@ function Invoke-AzureOptIn {
         if (-not (Confirm-YesNo "Pre-configure Azure as the AI provider?" 'N')) { return $false }
         $endpoint = Read-DialogText -Title 'Azure endpoint' `
             -Prompt 'Paste your Azure resource endpoint (e.g. https://my-resource.cognitiveservices.azure.com/):'
-        if ([string]::IsNullOrWhiteSpace($endpoint)) { Write-Warn "No endpoint entered — skipping Azure setup."; return $false }
+        if ([string]::IsNullOrWhiteSpace($endpoint)) { Write-Warn "No endpoint entered - skipping Azure setup."; return $false }
         $key = Read-DialogSecret -Title 'Azure API key' -Prompt 'Paste your Azure OpenAI API key:'
-        if ([string]::IsNullOrWhiteSpace($key)) { Write-Warn "No API key entered — skipping Azure setup."; return $false }
+        if ([string]::IsNullOrWhiteSpace($key)) { Write-Warn "No API key entered - skipping Azure setup."; return $false }
     }
 
     $baseUrl = Resolve-AzureBaseUrl -Endpoint $endpoint -Key $key
@@ -479,7 +479,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
             if ($behind -gt 0) {
                 Write-Log "Updates found! Pulling latest changes..."
                 git pull --ff-only
-                # Don't re-exec on a failed pull — that would loop (still behind).
+                # Don't re-exec on a failed pull - that would loop (still behind).
                 if ($LASTEXITCODE -ne 0) { Write-Err "git pull --ff-only failed; resolve manually and re-run." }
                 Write-Log "Re-executing updated script..."
                 & $PSCommandPath @OriginalArgs
@@ -554,7 +554,7 @@ $azureConfigured = Invoke-AzureOptIn
 Write-Host ''
 Write-Log "Zap setup complete."
 if ($azureConfigured) {
-    $keyStep = "Azure OpenAI is configured and its API key is already in the DPAPI store ($($script:AzureBaseUrl)) — no UI paste needed."
+    $keyStep = "Azure OpenAI is configured and its API key is already in the DPAPI store ($($script:AzureBaseUrl)) - no UI paste needed."
 } else {
     $keyStep = 'No AI provider was configured. Add one via Settings -> AI -> Agent Providers (or re-run and accept the Azure prompt, or set ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY).'
 }
@@ -569,5 +569,5 @@ Next steps:
      loads, then press Ctrl+D on an empty prompt to close the pane.
   5. The microsoft-learn and deepwiki MCP servers are registered in
      $ZapHomeDir\.mcp.json (confirm both appear in the agent panel; if missing,
-     check that `$env:WARP_DATA_PROFILE is unset — it changes the dir Zap reads).
+     check that `$env:WARP_DATA_PROFILE is unset - it changes the dir Zap reads).
 "@ | Write-Host

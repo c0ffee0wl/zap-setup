@@ -99,6 +99,16 @@ Zap loads MCP server definitions from `~/.zap/.mcp.json` at startup and re-reads
 
 `windows/setup.ps1` mirrors `linux/setup.sh` phase-for-phase; `windows/common.ps1` mirrors `common.sh` (`Write-Log`/`Write-Warn`/`Write-Err`, `Backup-File`, `Confirm-YesNo`, `Install-WithPrompt`). `windows/configs/keybindings.yaml` and `windows/configs/mcp.json` are **byte-identical copies** of the Linux payloads (the keymap's `cmd-*` maps to the Win key on Windows); only `windows/configs/settings.toml` is Windows-specific. There is no theme YAML — Dracula is built in.
 
+### `windows/*.ps1` must be pure ASCII (no BOM)
+
+Windows PowerShell 5.1 — the default shell on Windows 10/11 and the configured session shell — reads a BOM-less `.ps1` as the system ANSI codepage (Windows-1252), **not** UTF-8. Any non-ASCII byte then mis-decodes: an em-dash (`—`, UTF-8 `E2 80 94`) becomes the 3-char sequence `â€"`, which corrupts string boundaries and cascades into bogus parser errors (e.g. `Missing statement block in switch statement clause` at every following `function`). PowerShell 7 and Linux `pwsh` default to UTF-8, so the breakage is invisible there.
+
+Rule: keep `windows/setup.ps1` and `windows/common.ps1` **pure ASCII** — use `-` not `—`, `'` not `'`/`'`, `"` not `"`/`"`. ASCII parses identically under both ANSI and UTF-8, so no BOM is needed (and a BOM is deliberately avoided — Zap reads the `windows/configs/*` payloads as UTF-8 and a stray BOM would break those parsers, so don't reach for BOMs as a habit here). This is the one place the repo's house em-dash style is dropped; CLAUDE.md and the Linux `*.sh` files keep their em-dashes. Guard it before any edit to either `.ps1`:
+
+```bash
+grep -nP '[^\x00-\x7F]' windows/setup.ps1 windows/common.ps1   # must print nothing
+```
+
 ### Install mechanism
 
 The Windows asset is **`ZapSetup.exe`** (Inno Setup), not a `.deb`. Older releases shipped `OpenWarpSetup.exe`, so the asset filter pins `^ZapSetup\.exe$` and walks `releases?per_page=30` newest-first — the same anti-rename-trap discipline as the `.deb` filter. Install is silent + per-user (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, `PrivilegesRequired=lowest` → no admin). Version short-circuit reads `DisplayVersion` from the Inno per-user uninstall key `HKCU:\…\Uninstall\zap-oss_is1` (OSS channel `AppId=zap-oss`).
