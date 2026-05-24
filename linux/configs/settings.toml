@@ -184,7 +184,7 @@ show_terminal_zero_state_block = false
 
 # Terminal input: hide the inline autosuggestion hint, use the classic
 # (single-line) input box, and respect $PS1 from the user's shell rc
-# instead of synthesising Warp's own prompt.
+# instead of synthesising Zap's own prompt.
 [terminal.input]
 show_hint_text         = false
 input_box_type_setting = "classic"

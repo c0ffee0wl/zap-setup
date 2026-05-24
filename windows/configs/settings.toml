@@ -98,14 +98,6 @@ thinking_display_mode = "never_show"
 # table array here (and writes the API key to the DPAPI store). Decline the
 # prompt and Zap starts with no provider — add one via Settings.
 
-[agents.third_party]
-
-# Register Claude Code (and the `blaude` alias) with Zap's third-party CLI
-# agent toolbar — when the running foreground command matches, Zap shows the
-# dedicated Claude footer instead of treating the process as an opaque TTY.
-[agents.third_party.cli_agent_toolbar_enabled_commands]
-'(^|/)(claude|blaude)(\s|$)' = "Claude"
-
 # Stretch toast duration to 8 s (default is shorter).
 [notifications]
 toast_duration_secs = 8
