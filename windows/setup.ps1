@@ -158,6 +158,36 @@ function Get-ZapInstallDir {
     return $null
 }
 
+function Close-SpawnedZap {
+    # Close the Zap window the installer's [Run] entry auto-launches, so the
+    # installer can finish (or so we don't leave a stray window if it launched
+    # Zap detached). Matches a process with a visible main window that started
+    # AFTER $After and is either named like 'zap' OR lives under the install
+    # dir. The $After gate means a Zap the user already had open is never
+    # touched. Records closed PIDs in $Seen so the caller can tell whether
+    # anything was closed (and we only log each once).
+    param([datetime]$After, [hashtable]$Seen)
+    $dir = Get-ZapInstallDir
+    $prefix = if ($dir) { $dir.TrimEnd('\') + '\' } else { $null }
+    Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            if ($_.MainWindowHandle -eq [IntPtr]::Zero) { $false }
+            elseif ($_.StartTime -le $After) { $false }
+            elseif ($_.Name -like 'zap*') { $true }
+            elseif ($prefix -and $_.Path -and $_.Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { $true }
+            else { $false }
+        } catch { $false }
+    } | ForEach-Object {
+        if (-not $Seen.ContainsKey($_.Id)) {
+            Write-Log "Closing auto-launched Zap '$($_.Name)' (pid $($_.Id)) so the installer can finish."
+            $Seen[$_.Id] = $true
+        }
+        $_.CloseMainWindow() | Out-Null
+        Start-Sleep -Milliseconds 300
+        if (-not $_.HasExited) { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Resolve-LatestZapRelease {
     $api = "https://api.github.com/repos/$Repo/releases?per_page=30"
     $headers = @{ 'User-Agent' = 'zap-setup'; 'Accept' = 'application/vnd.github+json' }
@@ -202,49 +232,39 @@ function Install-Zap {
         Invoke-WebRequest -Uri $rel.Url -OutFile $tmp -UseBasicParsing
         Write-Log "Running silent install (per-user, no admin needed)..."
         # Zap's Inno [Run] entry launches the app on completion WITHOUT the
-        # 'skipifsilent'/'nowait' flags, so a plain -Wait would block here until
-        # the user closes the Zap window. Instead, start without waiting, and as
-        # soon as Inno has registered the install (the uninstall key exists, so
-        # Get-ZapInstallDir resolves - [Run] is the very last phase, after all
-        # [Files] are copied), close the Zap window the installer auto-launched
-        # so the installer can exit. The match requires a real main window, a
-        # path under the install dir, AND a start time after this install began,
-        # so a Zap the user already had open is left untouched. We deliberately
-        # do NOT gate on a version-string match: Inno's DisplayVersion may carry
-        # a leading 'v' or be normalized differently from the release tag.
+        # 'skipifsilent' flag, so /VERYSILENT still opens Zap. A plain -Wait
+        # would then block until the user closes that window (if [Run] also
+        # lacks 'nowait'); if [Run] has 'nowait', the installer exits but leaves
+        # the window open. We handle both: start without waiting, and keep
+        # closing the spawned Zap (Close-SpawnedZap) both WHILE the installer is
+        # alive and for a short grace window after it exits (to catch a detached
+        # launch whose window appears just after exit). [Run] is the last phase,
+        # after all [Files] are copied, so closing it loses nothing.
         $proc = Start-Process -FilePath $tmp `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
         $startedAt  = Get-Date
         $deadline   = (Get-Date).AddMinutes(5)
         $closedPids = @{}
         while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
-            $dir = Get-ZapInstallDir
-            if ($dir) {
-                $prefix = $dir.TrimEnd('\') + '\'
-                Get-Process -ErrorAction SilentlyContinue | Where-Object {
-                    try {
-                        $_.MainWindowHandle -ne [IntPtr]::Zero -and
-                        $_.StartTime -gt $startedAt -and $_.Path -and
-                        $_.Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
-                    } catch { $false }
-                } | ForEach-Object {
-                    if (-not $closedPids.ContainsKey($_.Id)) {
-                        Write-Log "Closing auto-launched Zap (pid $($_.Id)) so the installer can exit."
-                        $closedPids[$_.Id] = $true
-                    }
-                    $_.CloseMainWindow() | Out-Null
-                    Start-Sleep -Milliseconds 300
-                    if (-not $_.HasExited) { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-                }
-            }
+            Close-SpawnedZap -After $startedAt -Seen $closedPids
             Start-Sleep -Milliseconds 500
         }
         if (-not $proc.HasExited) {
-            # The files are already installed; stop waiting on the installer (it
-            # is blocked on a Zap window we could not match) and move on.
+            # Files are already installed; stop waiting on the installer (it is
+            # blocked on a Zap window we could not match) and move on.
             Write-Warn "Installer did not exit within 5 min; ending its wait (Zap is already installed)."
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             $proc.WaitForExit(10000) | Out-Null
+        }
+        # Grace window for the detached-launch case: the installer exited but Zap
+        # may pop up a moment later. Stop as soon as we have closed something.
+        $graceEnd = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $graceEnd -and $closedPids.Count -eq 0) {
+            Close-SpawnedZap -After $startedAt -Seen $closedPids
+            Start-Sleep -Milliseconds 500
+        }
+        if ($closedPids.Count -eq 0) {
+            Write-Warn "No auto-launched Zap window was detected to close; if one is open you can close it manually."
         }
         # The uninstall key is authoritative: [Run] is the last phase, so a
         # registered version means success even if force-closing the spawned Zap
