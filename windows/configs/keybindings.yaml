@@ -32,7 +32,7 @@
 "notebookview:decrease_font_size":                 ctrl--
 "notebookview:reset_font_size":                    ctrl-0
 
-# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+R)
+# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+E)
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none

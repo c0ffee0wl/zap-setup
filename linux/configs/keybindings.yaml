@@ -4,19 +4,18 @@
 # Zap-specific unbinds the live config writes.
 #
 # Keymap engine notes:
-# - `cmd-*` is the Mac-default modifier; on Linux it transparently maps
-#   to the Super / Windows key. Use `cmd-*` for cross-platform bindings.
-# - `logo-*` is the Linux-native name for the Super key. Both forms work.
-#   Zap's UI tends to write whichever matches the action's default
-#   platform: `cmd-y` for split-down (Warp's Mac default) but `logo-r`
-#   for rename-tab. Keep whatever the live config produces.
+# - Valid modifiers are exactly: ctrl, alt, shift, cmd, meta, cmdorctrl
+#   (crates/warpui_core/src/keymap.rs:909-920; parsed by Keystroke::parse via
+#   app/src/keyboard.rs:201). `cmd-*` is the cross-platform primary modifier;
+#   on Linux it maps to the Super key. There is NO `logo`/`super` token —
+#   Keystroke::parse rejects it, so a binding like `ctrl-shift-logo-D` silently
+#   fails to load.
 # - `shift+letter` must be uppercase (ctrl-shift-N, not ctrl-shift-n).
 # - `none` removes a binding.
 #
 # Environment caveats:
 # - XFCE Whisker often maps Super_L to its menu — remove that binding in
-#   Xubuntu's Keyboard settings, otherwise cmd-* / logo-* won't reach
-#   Zap.
+#   Xubuntu's Keyboard settings, otherwise cmd-* (Super) chords won't reach Zap.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
@@ -33,11 +32,13 @@
 "notebookview:decrease_font_size":                 ctrl--
 "notebookview:reset_font_size":                    ctrl-0
 
-# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+R)
+# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+E)
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none
-"workspace:close_window":                          ctrl-shift-logo-D
+# Terminator default close_window = Ctrl+Shift+Q. (Previously `ctrl-shift-logo-D`,
+# but `logo` is not a valid Zap modifier, so that binding never loaded.)
+"workspace:close_window":                          ctrl-shift-Q
 "workspace:activate_next_tab":                     ctrl-tab
 "workspace:activate_prev_tab":                     ctrl-shift-tab
 "workspace:activate_first_tab":                    ctrl-1
