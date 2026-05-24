@@ -108,6 +108,12 @@ id   = "azure/gpt-5.4-mini"
 [agents.warp_agent.active_ai]
 enabled = false
 
+# Don't auto-detect natural-language input in the terminal prompt — keep the
+# terminal a terminal (plain text stays a command, never silently switches to
+# an AI prompt).
+[agents.warp_agent.input]
+nld_in_terminal_enabled = false
+
 [agents.voice]
 voice_input_enabled = false
 
