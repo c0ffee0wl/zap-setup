@@ -1,0 +1,10 @@
+{
+  "mcp_servers": {
+    "microsoft-learn": {
+      "url": "https://learn.microsoft.com/api/mcp"
+    },
+    "deepwiki": {
+      "url": "https://mcp.deepwiki.com/mcp"
+    }
+  }
+}

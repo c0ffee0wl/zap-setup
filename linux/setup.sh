@@ -35,7 +35,7 @@ Options:
   --help, -h               Show this help and exit
 
 Interactive mode (default) prompts before overwriting any existing config in
-~/.config/zap/ or ~/.local/share/zap/themes/. Backups are timestamped.
+~/.config/zap/, ~/.local/share/zap/themes/, or ~/.zap/. Backups are timestamped.
 
 EOF
     exit 0
@@ -83,6 +83,13 @@ fi
 # in the upstream source).
 CONFIG_DIR="$HOME/.config/zap"
 THEMES_DIR="$HOME/.local/share/zap/themes"
+# MCP server defs live in a separate JSON file Zap loads at startup.
+# Path is derived from the build channel in crates/warp_core/src/paths.rs;
+# the OSS channel resolves to `~/.zap/` (NOT `~/.config/zap/`). A non-empty
+# $WARP_DATA_PROFILE shifts the dir to `~/.zap-<profile>/` — warp_home_config_dir_name()
+# appends `-<profile>` whenever ChannelState::data_profile() (env::var("WARP_DATA_PROFILE"))
+# is Some, so mirror that here or the file lands where Zap won't read it.
+ZAP_HOME_DIR="$HOME/.zap${WARP_DATA_PROFILE+-$WARP_DATA_PROFILE}"
 
 # OS-keyring contract — coupled to Zap internals
 # (app/src/ai/agent_providers/secrets.rs). The service name is the app ID
@@ -183,7 +190,7 @@ install_zap_from_github
 #############################################################################
 
 log "Configuring Zap..."
-mkdir -p "$CONFIG_DIR" "$THEMES_DIR"
+mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 
 install_with_prompt() {
     local src=$1 dst=$2 label=$3 transform=${4:-cat}
@@ -218,6 +225,13 @@ install_with_prompt \
     "$CONFIG_DIR/settings.toml" \
     "settings (font + theme + provider)" \
     render_settings
+
+# MCP servers — auth-free URL-based endpoints only. Zap watches this file
+# (app/src/ai/mcp/file_mcp_watcher.rs) and picks up changes without a restart.
+install_with_prompt \
+    "$SCRIPT_DIR/configs/mcp.json" \
+    "$ZAP_HOME_DIR/.mcp.json" \
+    "MCP servers (microsoft-learn, deepwiki)"
 
 # Zap spawns login shells per tab, which makes PAM's pam_motd.so
 # print /etc/motd on every new tab. An empty ~/.hushlogin tells PAM to
@@ -287,5 +301,9 @@ Next steps:
      POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
      proxy listening on the default port 4000 — out of scope for this
      installer).
+  5. The microsoft-learn and deepwiki MCP servers are registered in
+     $ZAP_HOME_DIR/.mcp.json. In the agent panel, confirm both appear in
+     the available MCP tools list (if they're missing, check that
+     \$WARP_DATA_PROFILE is unset — it changes the dir Zap reads).
 
 EOF

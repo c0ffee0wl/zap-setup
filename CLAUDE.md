@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A single-purpose installer that fetches the latest **Zap** terminal `.deb` from `github.com/zerx-lab/zap`, installs it via `apt`, and writes three opinionated configs (theme, keybindings, settings.toml) targeting Terminator parity — specifically the effective Terminator keymap produced by `/opt/linux-setup/linux-setup.sh`. No build system, no tests; just a Bash script + shared helpers in `linux/common.sh` + three payload files in `linux/configs/`.
+A single-purpose installer that fetches the latest **Zap** terminal `.deb` from `github.com/zerx-lab/zap`, installs it via `apt`, and writes four opinionated configs (theme, keybindings, settings.toml, mcp.json) targeting Terminator parity — specifically the effective Terminator keymap produced by `/opt/linux-setup/linux-setup.sh`. No build system, no tests; just a Bash script + shared helpers in `linux/common.sh` + four payload files in `linux/configs/`.
 
 The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint; the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
 
@@ -63,6 +63,18 @@ Symlink:      /usr/bin/zap  ← user-facing command
 Desktop ID:   dev.zap.Zap
 Config dir:   ~/.config/zap/
 Themes dir:   ~/.local/share/zap/themes/
+MCP file:     ~/.zap/.mcp.json   (OSS channel — NOT under ~/.config/zap/)
 ```
 
 The `.deb` postinst deliberately does **not** configure an APT repo or trust key, so updates only happen via re-running this installer (which fetches a new .deb if upstream has a newer version). The script also writes `[updates] automatic_updates_enabled = false` to suppress the otherwise-useless in-app update toast.
+
+### MCP servers — separate JSON, not settings.toml
+
+Zap loads MCP server definitions from `~/.zap/.mcp.json` at startup and re-reads the file on change via `app/src/ai/mcp/file_mcp_watcher.rs`. The path is built by `warp_home_mcp_config_file_path()` in `crates/warp_core/src/paths.rs`; the OSS channel directory name is `.zap` (stable/preview use `.warp`). `settings.toml` carries no MCP definitions — the only MCP-adjacent TOML key is the bool `agents.mcp_servers.file_based_mcp_enabled`, which only gates third-party file watchers.
+
+`linux/configs/mcp.json` ships two auth-free URL servers (`microsoft-learn`, `deepwiki`). Schema notes for additions:
+
+- Top-level wrapper is `mcp_servers` (snake_case canonical; `mcpServers` / `servers` are accepted aliases — `app/src/ai/mcp/templatable.rs:71-78`).
+- URL/SSE entries use `url` (Zap also accepts the `serverUrl` alias, but use canonical `url` so Zap's own serializer doesn't rewrite-and-diff on first save).
+- Each server has exactly one of `command` (stdio) or `url` (HTTP/SSE) — validated in `app/src/ai/agent_sdk/mcp_config.rs`.
+- **Do not bundle MCPs that require auth headers.** Zap has no keyring slot for MCP headers, so a token in `headers.Authorization` would land in a world-readable JSON file. Servers like GitHub/Linear/Sentry stay user-added, not bundled.
