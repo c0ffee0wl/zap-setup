@@ -137,6 +137,27 @@ function Get-InstalledZapVersion {
     return $null
 }
 
+function Get-ZapInstallDir {
+    # Where Inno put the program files - InstallLocation from the uninstall key,
+    # falling back to the directory of the UninstallString ({app}\unins000.exe).
+    $keys = @(
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
+        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName"
+    )
+    foreach ($k in $keys) {
+        try {
+            $p = Get-ItemProperty -LiteralPath $k -ErrorAction Stop
+            if ($p.InstallLocation) { return ([string]$p.InstallLocation).TrimEnd('\') }
+            if ($p.UninstallString) {
+                $d = Split-Path -Parent (([string]$p.UninstallString).Trim('"'))
+                if ($d) { return $d.TrimEnd('\') }
+            }
+        } catch { }
+    }
+    return $null
+}
+
 function Resolve-LatestZapRelease {
     $api = "https://api.github.com/repos/$Repo/releases?per_page=30"
     $headers = @{ 'User-Agent' = 'zap-setup'; 'Accept' = 'application/vnd.github+json' }
@@ -166,7 +187,9 @@ function Install-Zap {
     Write-Log "Latest Zap release: $($rel.Tag)"
 
     $installed = Get-InstalledZapVersion
-    if ($installed -and ($installed -eq $rel.Version)) {
+    # Inno's DisplayVersion may carry a leading 'v' (the release tag does; the
+    # de-v'd $rel.Version does not), so normalize both sides before comparing.
+    if ($installed -and (($installed -replace '^[vV]', '') -eq ($rel.Version -replace '^[vV]', ''))) {
         Write-Log "Zap $installed already installed (latest release)"
         return
     }
@@ -178,9 +201,60 @@ function Install-Zap {
         Write-Log "Downloading $($rel.Url)"
         Invoke-WebRequest -Uri $rel.Url -OutFile $tmp -UseBasicParsing
         Write-Log "Running silent install (per-user, no admin needed)..."
+        # Zap's Inno [Run] entry launches the app on completion WITHOUT the
+        # 'skipifsilent'/'nowait' flags, so a plain -Wait would block here until
+        # the user closes the Zap window. Instead, start without waiting, and as
+        # soon as Inno has registered the install (the uninstall key exists, so
+        # Get-ZapInstallDir resolves - [Run] is the very last phase, after all
+        # [Files] are copied), close the Zap window the installer auto-launched
+        # so the installer can exit. The match requires a real main window, a
+        # path under the install dir, AND a start time after this install began,
+        # so a Zap the user already had open is left untouched. We deliberately
+        # do NOT gate on a version-string match: Inno's DisplayVersion may carry
+        # a leading 'v' or be normalized differently from the release tag.
         $proc = Start-Process -FilePath $tmp `
-            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
-        if ($proc.ExitCode -ne 0) { Write-Err "ZapSetup.exe exited with code $($proc.ExitCode)" }
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
+        $startedAt  = Get-Date
+        $deadline   = (Get-Date).AddMinutes(5)
+        $closedPids = @{}
+        while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
+            $dir = Get-ZapInstallDir
+            if ($dir) {
+                $prefix = $dir.TrimEnd('\') + '\'
+                Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                    try {
+                        $_.MainWindowHandle -ne [IntPtr]::Zero -and
+                        $_.StartTime -gt $startedAt -and $_.Path -and
+                        $_.Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+                    } catch { $false }
+                } | ForEach-Object {
+                    if (-not $closedPids.ContainsKey($_.Id)) {
+                        Write-Log "Closing auto-launched Zap (pid $($_.Id)) so the installer can exit."
+                        $closedPids[$_.Id] = $true
+                    }
+                    $_.CloseMainWindow() | Out-Null
+                    Start-Sleep -Milliseconds 300
+                    if (-not $_.HasExited) { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $proc.HasExited) {
+            # The files are already installed; stop waiting on the installer (it
+            # is blocked on a Zap window we could not match) and move on.
+            Write-Warn "Installer did not exit within 5 min; ending its wait (Zap is already installed)."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $proc.WaitForExit(10000) | Out-Null
+        }
+        # The uninstall key is authoritative: [Run] is the last phase, so a
+        # registered version means success even if force-closing the spawned Zap
+        # (or ending the installer above) made the process report a non-zero code.
+        $exit = $null
+        try { if ($proc.HasExited) { $exit = $proc.ExitCode } } catch { }
+        if (-not (Get-InstalledZapVersion)) {
+            $detail = if ($null -ne $exit) { "exit code $exit" } else { "no exit code available" }
+            Write-Err "Zap did not register an install ($detail)."
+        }
         Write-Log "Zap installed."
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -248,46 +322,81 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
 # Phase 5 helpers - Azure opt-in (dialogs, endpoint probe, TOML, DPAPI)
 #############################################################################
 
-function Read-DialogText {
-    param([string]$Title, [string]$Prompt)
+function Show-ZapInputDialog {
+    # Modern WinForms input box: visual styles on, Segoe UI, padded layout, a
+    # real window icon. Returns the entered text, or '' if cancelled/closed.
+    # -Secret masks the input. Falls back to the console if WinForms is missing
+    # (e.g. a headless host), mirroring the old per-function fallbacks.
+    param(
+        [string]$Title,
+        [string]$Prompt,
+        [switch]$Secret
+    )
     try {
-        Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop
-        return [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, '')
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        try { [System.Windows.Forms.Application]::EnableVisualStyles() } catch { }
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text            = $Title
+        $form.Font            = New-Object System.Drawing.Font('Segoe UI', 9.75)
+        $form.ClientSize      = New-Object System.Drawing.Size(460, 150)
+        $form.StartPosition   = 'CenterScreen'
+        $form.FormBorderStyle = 'FixedDialog'
+        $form.MinimizeBox     = $false
+        $form.MaximizeBox     = $false
+        $form.TopMost         = $true
+        $form.ShowInTaskbar   = $false
+        try { $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).Path) } catch { }
+
+        $label = New-Object System.Windows.Forms.Label
+        $label.Text     = $Prompt
+        $label.Location = New-Object System.Drawing.Point(16, 16)
+        $label.Size     = New-Object System.Drawing.Size(428, 48)
+
+        $tb = New-Object System.Windows.Forms.TextBox
+        $tb.Location = New-Object System.Drawing.Point(16, 70)
+        $tb.Size     = New-Object System.Drawing.Size(428, 26)
+        if ($Secret) { $tb.UseSystemPasswordChar = $true }
+
+        $ok = New-Object System.Windows.Forms.Button
+        $ok.Text         = 'OK'
+        $ok.Size         = New-Object System.Drawing.Size(86, 30)
+        $ok.Location     = New-Object System.Drawing.Point(262, 110)
+        $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+        $cancel = New-Object System.Windows.Forms.Button
+        $cancel.Text         = 'Cancel'
+        $cancel.Size         = New-Object System.Drawing.Size(86, 30)
+        $cancel.Location     = New-Object System.Drawing.Point(358, 110)
+        $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+        $form.Controls.AddRange(@($label, $tb, $ok, $cancel))
+        $form.AcceptButton = $ok
+        $form.CancelButton = $cancel
+        $form.Add_Shown({ $form.Activate(); $tb.Focus() })
+
+        if ($form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $tb.Text }
+        return ''
     } catch {
+        if ($Secret) {
+            $secure = Read-Host $Prompt -AsSecureString
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+            try { return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+            finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        }
         return (Read-Host $Prompt)
     }
 }
 
+function Read-DialogText {
+    param([string]$Title, [string]$Prompt)
+    return (Show-ZapInputDialog -Title $Title -Prompt $Prompt)
+}
+
 function Read-DialogSecret {
     param([string]$Title, [string]$Prompt)
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-        $form = New-Object System.Windows.Forms.Form
-        $form.Text = $Title; $form.Width = 500; $form.Height = 180
-        $form.StartPosition = 'CenterScreen'; $form.FormBorderStyle = 'FixedDialog'
-        $form.MinimizeBox = $false; $form.MaximizeBox = $false; $form.TopMost = $true
-        $label = New-Object System.Windows.Forms.Label
-        $label.Text = $Prompt; $label.Left = 12; $label.Top = 12; $label.Width = 460; $label.Height = 40
-        $tb = New-Object System.Windows.Forms.TextBox
-        $tb.UseSystemPasswordChar = $true; $tb.Left = 12; $tb.Top = 60; $tb.Width = 460
-        $ok = New-Object System.Windows.Forms.Button
-        $ok.Text = 'OK'; $ok.Left = 316; $ok.Top = 100; $ok.Width = 75
-        $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $cancel = New-Object System.Windows.Forms.Button
-        $cancel.Text = 'Cancel'; $cancel.Left = 397; $cancel.Top = 100; $cancel.Width = 75
-        $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-        $form.Controls.AddRange(@($label, $tb, $ok, $cancel))
-        $form.AcceptButton = $ok; $form.CancelButton = $cancel
-        $result = $form.ShowDialog()
-        if ($result -eq [System.Windows.Forms.DialogResult]::OK) { return $tb.Text }
-        return ''
-    } catch {
-        $secure = Read-Host $Prompt -AsSecureString
-        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-        try { return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-        finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-    }
+    return (Show-ZapInputDialog -Title $Title -Prompt $Prompt -Secret)
 }
 
 function Test-AzureEndpoint {
