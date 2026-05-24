@@ -14,8 +14,10 @@
 # Windows caveat:
 # - A bare `cmd-<letter>` resolves to Win+<letter>, and Windows reserves some
 #   of those at the OS level (Win+E = Explorer, Win+A = Action Center) so they
-#   never reach an app. The split/rename bindings below therefore use
+#   never reach an app. The split bindings below therefore use
 #   `ctrl-cmd-<letter>` (Ctrl+Win+<letter>), which Windows does not reserve.
+#   Rename-tab uses `shift-cmd-E` (Shift+Win+E): the Ctrl+Win+E form did not
+#   fire on Windows in practice, and Shift+Win+E is likewise unreserved.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
@@ -53,7 +55,7 @@
 "workspace:activate_eighth_tab":                   none
 "workspace:move_tab_right":                        ctrl-shift-pagedown
 "workspace:move_tab_left":                         ctrl-shift-pageup
-"workspace:rename_active_tab":                     ctrl-cmd-e
+"workspace:rename_active_tab":                     shift-cmd-E
 
 # Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav +
 # resize). On Windows the bare Win+<letter> forms are OS-reserved, so we prefix
