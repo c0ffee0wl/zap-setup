@@ -4,7 +4,7 @@ Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetc
 
 Runs on Debian and Kali (Bash) as a regular user. amd64 only; Zap publishes no arm64 `.deb`.
 
-There is also a Windows (PowerShell) installer under `windows/` — see [Windows](#windows) below.
+There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#windows) below.
 
 ## Quick Start
 
@@ -16,9 +16,11 @@ export LITELLM_API_KEY=sk-...        # optional: pre-stash in OS keyring
 zap                                  # launch
 ```
 
-Open Zap. The provider picker shows "LiteLLM (local)" pointing at `http://127.0.0.1:4000/v1/`. If you skipped the `LITELLM_API_KEY` export, the end-of-setup banner tells you to paste the key once via Settings → AI → Agent Providers → LiteLLM (local) → API Key. It lands in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), not in `settings.toml`.
+Open Zap and you have a working terminal straight away. The AI wiring is optional; Zap is a perfectly good terminal without any of it.
 
-A LiteLLM proxy on `127.0.0.1:4000` is a prerequisite. This repo does not install or configure LiteLLM; see [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) for the sibling installer that does.
+Where it gets good is the built-in LLM integration, and that's really the reason to bother. Setup pre-configures an agent provider named "LiteLLM (local)" aimed at `http://127.0.0.1:4000/v1/`, so if you have a LiteLLM proxy listening on that port, the agent works the moment you add a key. Paste it once via Settings → AI → Agent Providers → LiteLLM (local) → API Key, or export `LITELLM_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
+
+No proxy running? Nothing breaks. The provider just sits idle and the rest of Zap behaves exactly the same until you point it at a live endpoint. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup this is built for.
 
 ## Setup Modes
 
@@ -32,7 +34,7 @@ A LiteLLM proxy on `127.0.0.1:4000` is a prerequisite. This repo does not instal
 ## Architecture
 
 ```
-Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► Azure / Vertex / etc.
+Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► Azure / Vertex / etc.  (AI agent; optional)
     │
     ├── ~/.config/zap/settings.toml         (font, theme selector, provider block)
     ├── ~/.config/zap/keybindings.yaml      (Terminator-parity bindings)
@@ -66,7 +68,7 @@ Zap updates are managed by re-running this installer. There is no `apt upgrade` 
 
 ## Windows
 
-A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider — writing the API key straight to where Zap reads it.
+A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it.
 
 Requires Windows 10 build 18362+ (ConPTY). x64.
 
@@ -76,7 +78,7 @@ cd $env:USERPROFILE\zap-setup
 .\windows\setup.ps1
 ```
 
-If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.cognitiveservices.azure.com/`) and API key. The script normalizes it to the OpenAI-compatible v1 base URL (`…/openai/v1/`), probes it (falling back to the `openai.azure.com` host if the cognitiveservices host doesn't serve the v1 route), writes the provider into `settings.toml`, and stores the key in Zap's DPAPI secrets file — so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
+If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.cognitiveservices.azure.com/`) and API key. The script normalizes it to the OpenAI-compatible v1 base URL (`…/openai/v1/`), probes it (falling back to the `openai.azure.com` host if the cognitiveservices host doesn't serve the v1 route), writes the provider into `settings.toml`, and stores the key in Zap's DPAPI secrets file, so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
 
 ### Setup modes
 
@@ -101,10 +103,10 @@ Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1   (Ctrl+D handler; 
 
 Windows-specific notes:
 
-- **No Credential Manager.** Zap stores provider API keys as a single DPAPI-encrypted file (`CryptProtectData`, CurrentUser scope, no entropy) — not in the Credential Manager. The installer writes it with .NET `ProtectedData.Protect`, read-merging any existing entries so other providers' keys aren't clobbered.
-- **`dx_12`, not `dx12`.** Zap serializes the graphics-backend enum via `convert_case` (which splits `Dx12` at the letter→digit boundary), so the literal is `dx_12` — matching exactly what Zap's GUI writes.
+- **No Credential Manager.** Zap stores provider API keys as a single DPAPI-encrypted file (`CryptProtectData`, CurrentUser scope, no entropy), not in the Credential Manager. The installer writes it with .NET `ProtectedData.Protect`, read-merging any existing entries so other providers' keys aren't clobbered.
+- **`dx_12`, not `dx12`.** Zap serializes the graphics-backend enum via `convert_case` (which splits `Dx12` at the letter→digit boundary), so the literal is `dx_12`, matching exactly what Zap's GUI writes.
 - **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer` and appends `chat/completions` to `base_url`, so only the `…/openai/v1/` form works; the classic `…/openai/deployments/{name}/chat/completions?api-version=…` route (which expects the `api-key` header) would return 401.
 - **Ctrl+D.** Zap forwards Ctrl+D to the PTY as EOF; bash exits on an empty line, PowerShell does not. The installed handler replicates bash: Ctrl+D on an empty prompt runs `exit` (closing the pane), otherwise deletes the char under the cursor. It is written into both the Windows PowerShell 5.1 profile and (if `pwsh` is installed) the PowerShell 7+ profile.
-- **Dracula is built in** — no theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
+- **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
 
 Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.
