@@ -81,10 +81,32 @@ zoom_level = 125
 [appearance.tabs]
 workspace_decoration_visibility = "always_show"
 
+# Vertical tabs stay DISABLED by default — `appearance.vertical_tabs.enabled`
+# (the use_vertical_tabs key, app/src/workspace/tab_settings.rs:478) defaults to
+# false and we deliberately don't write it. The keys below only shape the
+# vertical tab bar IF the user later turns it on (Settings → Appearance → Tabs).
+# Keys + enum variants verified in app/src/workspace/tab_settings.rs:
+#   display_granularity   → VerticalTabsDisplayGranularity {panes|tabs}
+#   view_mode             → VerticalTabsViewMode {compact|expanded}
+#   compact_subtitle      → VerticalTabsCompactSubtitle {branch|working_directory|command}
+#   show_details_on_hover → bool
+# These enums serialize via the settings_value derive (convert_case Case::Snake);
+# none of the chosen variants have digits/acronyms, so snake_case is unambiguous.
+[appearance.vertical_tabs]
+display_granularity   = "tabs"
+view_mode             = "compact"
+compact_subtitle      = "working_directory"
+show_details_on_hover = true
+
 # Focus the pane the mouse is over, even without clicking. Mirrors
 # Terminator's `focus = mouse` (set in /opt/linux-setup/linux-setup.sh).
 [appearance.panes]
 focus_pane_on_hover = true
+
+# Hide the project-explorer file tree in the code tools panel (default true).
+# Key verified in app/src/settings/code.rs:25 (code.editor.show_project_explorer).
+[code.editor]
+show_project_explorer = false
 
 # LiteLLM provider — proxy assumed to be listening on its default port 4000
 # at localhost (LiteLLM setup is out of scope for this installer).
