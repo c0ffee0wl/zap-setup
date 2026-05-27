@@ -53,10 +53,10 @@ zoom_level = 125
 [appearance.tabs]
 workspace_decoration_visibility = "always_show"
 
-# Vertical tabs stay DISABLED by default — `appearance.vertical_tabs.enabled`
+# Vertical tabs ENABLED by default — `appearance.vertical_tabs.enabled`
 # (the use_vertical_tabs key, app/src/workspace/tab_settings.rs:478) defaults to
-# false and we deliberately don't write it. The keys below only shape the
-# vertical tab bar IF the user later turns it on (Settings → Appearance → Tabs).
+# false, so we explicitly write it true. The remaining keys shape the vertical
+# tab bar (also reachable via Settings → Appearance → Tabs).
 # Keys + enum variants verified in app/src/workspace/tab_settings.rs:
 #   display_granularity   → VerticalTabsDisplayGranularity {panes|tabs}
 #   view_mode             → VerticalTabsViewMode {compact|expanded}
@@ -65,6 +65,7 @@ workspace_decoration_visibility = "always_show"
 # These enums serialize via the settings_value derive (convert_case Case::Snake);
 # none of the chosen variants have digits/acronyms, so snake_case is unambiguous.
 [appearance.vertical_tabs]
+enabled               = true
 display_granularity   = "tabs"
 view_mode             = "compact"
 compact_subtitle      = "working_directory"
