@@ -104,11 +104,6 @@ show_details_on_hover = true
 [appearance.panes]
 focus_pane_on_hover = true
 
-# Hide the project-explorer file tree in the code tools panel (default true).
-# Key verified in app/src/settings/code.rs:25 (code.editor.show_project_explorer).
-[code.editor]
-show_project_explorer = false
-
 # LiteLLM provider — proxy assumed to be listening on its default port 4000
 # at localhost (LiteLLM setup is out of scope for this installer).
 #
