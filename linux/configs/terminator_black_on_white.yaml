@@ -1,6 +1,6 @@
 ---
 name: Terminator Black on White
-background: '#ffffff'
+background: '#f6f5f4'
 foreground: '#000000'
 accent: '#3465a4'
 details: darker
