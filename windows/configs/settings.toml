@@ -82,15 +82,6 @@ focus_pane_on_hover = true
 [session.new_session_shell_override]
 executable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
-# Prefer the DirectX 12 graphics backend (Windows-only setting).
-# NOTE: the value is `dx_12` WITH an underscore. Zap serializes this enum via
-# the settings_value derive (convert_case 0.7 `Case::Snake`), which splits the
-# letter->digit boundary, so `GraphicsBackend::Dx12` becomes `dx_12` — NOT the
-# `dx12` that serde's snake_case would produce. This matches what Zap's GUI
-# writes, so a first save produces no rewrite-diff.
-[system]
-preferred_graphics_backend = "dx_12"
-
 # Disable proactive Active AI (the always-on assistant) — too intrusive for a
 # Terminator-style terminal.
 [agents.warp_agent.active_ai]

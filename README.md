@@ -94,7 +94,7 @@ For a non-interactive Azure setup, set `ZAP_AZURE_ENDPOINT` and `ZAP_AZURE_API_K
 ### Layout
 
 ```
-%LOCALAPPDATA%\zap\Zap\config\settings.toml      (theme, shell override, dx_12, providers)
+%LOCALAPPDATA%\zap\Zap\config\settings.toml      (theme, shell override, providers)
 %LOCALAPPDATA%\zap\Zap\config\keybindings.yaml   (Terminator-parity bindings)
 %USERPROFILE%\.zap\.mcp.json                      (MCP servers: microsoft-learn, deepwiki)
 %LOCALAPPDATA%\zap\Zap\data\dev.zap.Zap-AgentProviderSecrets   (DPAPI-encrypted {provider-id: key})
@@ -104,7 +104,6 @@ Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1   (Ctrl+D handler; 
 Windows-specific notes:
 
 - **No Credential Manager.** Zap stores provider API keys as a single DPAPI-encrypted file (`CryptProtectData`, CurrentUser scope, no entropy), not in the Credential Manager. The installer writes it with .NET `ProtectedData.Protect`, read-merging any existing entries so other providers' keys aren't clobbered.
-- **`dx_12`, not `dx12`.** Zap serializes the graphics-backend enum via `convert_case` (which splits `Dx12` at the letter→digit boundary), so the literal is `dx_12`, matching exactly what Zap's GUI writes.
 - **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer` and appends `chat/completions` to `base_url`, so only the `…/openai/v1/` form works; the classic `…/openai/deployments/{name}/chat/completions?api-version=…` route (which expects the `api-key` header) would return 401.
 - **Ctrl+D.** Zap forwards Ctrl+D to the PTY as EOF; bash exits on an empty line, PowerShell does not. The installed handler replicates bash: Ctrl+D on an empty prompt runs `exit` (closing the pane), otherwise deletes the char under the cursor. It is written into both the Windows PowerShell 5.1 profile and (if `pwsh` is installed) the PowerShell 7+ profile.
 - **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).

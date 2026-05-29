@@ -8,7 +8,7 @@ A single-purpose installer that fetches the latest **Zap** terminal `.deb` from 
 
 The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint; the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
 
-There is also a **Windows (PowerShell) port** under `windows/` — `setup.ps1` + `common.ps1` + `windows/configs/`. It mirrors the Linux phases but installs `ZapSetup.exe` (Inno Setup) silently, writes to Zap's Windows paths, and differs deliberately: built-in **Dracula** theme (no theme YAML), no font-family override, a `powershell.exe` session-shell override, the `dx_12` graphics backend, a bash-style Ctrl+D PowerShell handler, and an optional **Azure** provider whose key it writes to Zap's DPAPI secrets file. See the "Windows port" section below.
+There is also a **Windows (PowerShell) port** under `windows/` — `setup.ps1` + `common.ps1` + `windows/configs/`. It mirrors the Linux phases but installs `ZapSetup.exe` (Inno Setup) silently, writes to Zap's Windows paths, and differs deliberately: built-in **Dracula** theme (no theme YAML), no font-family override, a `powershell.exe` session-shell override, a bash-style Ctrl+D PowerShell handler, and an optional **Azure** provider whose key it writes to Zap's DPAPI secrets file. See the "Windows port" section below.
 
 ## Common commands
 
@@ -131,9 +131,9 @@ Program files (verified against a real per-user install, `PrivilegesRequired=low
 
 On Windows Zap stores provider keys in a single **DPAPI-encrypted file** (`crates/warpui_extras/src/secure_storage/windows.rs`), not the Credential Manager. Filename `{service}-{key}` = `dev.zap.Zap-AgentProviderSecrets`; plaintext is `serde_json` of `HashMap<provider_id, api_key>`. Encryption is `CryptProtectData` with **no entropy, flags 0 (CurrentUser scope)** and a cosmetic description that decrypt ignores — so PowerShell writes it with `[System.Security.Cryptography.ProtectedData]::Protect($utf8Bytes, $null, 'CurrentUser')`, no Win32 interop. `Write-AzureKeyToDpapi` read-merge-writes (mirrors the Linux Phase 4 jq merge) so other providers' keys survive.
 
-### `dx_12` — convert_case, not serde
+### Enum-valued keys — convert_case, not serde
 
-`[system] preferred_graphics_backend = "dx_12"` (with the underscore). `settings.toml` is serialized by the `settings_value::SettingsValue` derive, which uses `convert_case` `Case::Snake` (`crates/settings_value_derive/src/lib.rs`), NOT serde — and convert_case inserts a boundary at the lower→digit transition, so `GraphicsBackend::Dx12` → `dx_12`. The `rename_all="snake_case"` on the enum is `schemars`-only. **For any enum-valued key with digits/acronyms, derive the literal from convert_case (or copy what Zap's GUI writes), never serde's `snake_case`.**
+`settings.toml` is serialized by the `settings_value::SettingsValue` derive, which uses `convert_case` `Case::Snake` (`crates/settings_value_derive/src/lib.rs`), NOT serde — and convert_case inserts a boundary at the lower→digit transition, so an enum variant like `Dx12` becomes `dx_12`, not the `dx12` serde's `snake_case` would produce (the `rename_all="snake_case"` on the enum is `schemars`-only). **For any enum-valued key with digits/acronyms, derive the literal from convert_case (or copy what Zap's GUI writes), never serde's `snake_case`.**
 
 ### Azure provider — v1 route only
 
