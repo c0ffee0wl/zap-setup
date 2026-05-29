@@ -3,7 +3,7 @@ name: Terminator Black on White
 background: '#f6f5f4'
 foreground: '#000000'
 accent: '#3465a4'
-details: darker
+details: lighter
 terminal_colors:
   normal:
     black:   '#2e3436'
