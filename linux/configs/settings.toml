@@ -152,8 +152,14 @@ enabled = false
 # Don't auto-detect natural-language input in the terminal prompt — keep the
 # terminal a terminal (plain text stays a command, never silently switches to
 # an AI prompt).
+#
+# Surface commands the AI agent runs in normal command history (up-arrow,
+# Ctrl-R search, inline history menu). Defaults to false (agent commands
+# hidden); we flip it true so agent-run and hand-typed commands share one
+# history. Key + default verified in app/src/settings/ai.rs:1723.
 [agents.warp_agent.input]
-nld_in_terminal_enabled = false
+nld_in_terminal_enabled              = false
+include_agent_commands_in_history    = true
 
 [agents.voice]
 voice_input_enabled = false
