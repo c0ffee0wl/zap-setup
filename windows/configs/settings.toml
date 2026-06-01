@@ -92,13 +92,14 @@ enabled = false
 # an AI prompt). This fork defaults the key to true, so false is a real
 # override, not a no-op.
 #
-# Surface commands the AI agent runs in normal command history (up-arrow,
-# Ctrl-R search, inline history menu). Defaults to false (agent commands
-# hidden); we flip it true so agent-run and hand-typed commands share one
-# history. Key + default verified in app/src/settings/ai.rs:1723.
+# Keep commands the AI agent runs OUT of normal command history (up-arrow,
+# Ctrl-R search, inline history menu) — agent activity shouldn't pollute the
+# hand-typed command history. This matches Zap's default (false); we set it
+# explicitly to document the intent. Key + default verified in
+# app/src/settings/ai.rs:1723.
 [agents.warp_agent.input]
 nld_in_terminal_enabled              = false
-include_agent_commands_in_history    = true
+include_agent_commands_in_history    = false
 
 [agents.voice]
 voice_input_enabled = false
