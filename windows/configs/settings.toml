@@ -92,6 +92,12 @@ enabled = false
 # an AI prompt). This fork defaults the key to true, so false is a real
 # override, not a no-op.
 #
+# The reverse direction too: don't auto-detect when text typed into the agent
+# (AI) input is actually a shell command and silently treat it as one — keep
+# the agent input an AI prompt. This is the "Autodetect terminal commands in
+# agent input" toggle; it also defaults to true, so false is a real override.
+# Key + default verified in app/src/settings/ai.rs:1161.
+#
 # Keep commands the AI agent runs OUT of normal command history (up-arrow,
 # Ctrl-R search, inline history menu) — agent activity shouldn't pollute the
 # hand-typed command history. This matches Zap's default (false); we set it
@@ -99,6 +105,7 @@ enabled = false
 # app/src/settings/ai.rs:1723.
 [agents.warp_agent.input]
 nld_in_terminal_enabled              = false
+ai_auto_detection_enabled            = false
 include_agent_commands_in_history    = false
 
 [agents.voice]
