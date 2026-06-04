@@ -14,8 +14,13 @@
 # - `none` removes a binding.
 #
 # Environment caveats:
-# - XFCE Whisker often maps Super_L to its menu — remove that binding in
-#   Xubuntu's Keyboard settings, otherwise cmd-* (Super) chords won't reach Zap.
+# - XFCE grabs some Super chords globally (before the focused app), so they
+#   never reach Zap. Notably Super+E is an XFCE default bound to thunar, which
+#   shadows cmd-e (rename_active_tab) here. XFCE Whisker also maps Super_L to
+#   its menu, which on XFCE < 4.20 swallows every Super+<letter> chord. Remove
+#   the ones you want Zap to own in Settings -> Keyboard -> Application
+#   Shortcuts (setup.sh Phase 5 reports the live conflicts + xfconf-query
+#   removal commands), otherwise cmd-* (Super) chords won't reach Zap.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).

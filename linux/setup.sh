@@ -277,6 +277,52 @@ if [ -n "${LITELLM_API_KEY:-}" ]; then
 fi
 
 #############################################################################
+# PHASE 5: Flag conflicting XFCE global shortcuts (report only)
+#############################################################################
+# Zap's keymap (Terminator parity) claims Super+E (rename tab), Super+Y
+# (split down) and Super+A (split right). XFCE grabs some Super combos
+# globally — they fire on the desktop before the focused app, so the chord
+# never reaches Zap. We only report the overlap + the exact removal command;
+# we do not edit the user's desktop config. Defaults verified against
+# docs.xfce.org/xfce/xfwm4/keyboard_shortcuts (Super+E -> thunar is an XFCE
+# default; Super_L -> Whisker is the Xubuntu/Kali default and on XFCE < 4.20
+# it swallows every Super+<letter> chord).
+
+if command -v xfconf-query &> /dev/null \
+   && xfconf-query -c xfce4-keyboard-shortcuts -l &> /dev/null; then
+    # The <Super>{e,y,a} probes mirror the cmd-{e,y,a} Super bindings in
+    # configs/keybindings.yaml (rename_active_tab / add_down / add_right) —
+    # keep this list in sync if those Super bindings change. Super_L is the
+    # bare-Super Whisker grab. One lookup each: a non-empty value means the
+    # shortcut is bound. Carry the value alongside the combo (key is
+    # pipe-free, so '|' is a safe field separator) to avoid a second query.
+    found=()
+    for combo in '<Super>e' '<Super>y' '<Super>a' 'Super_L'; do
+        action=$(xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/$combo" 2>/dev/null || true)
+        [ -n "$action" ] && found+=("$combo|$action")
+    done
+
+    if [ ${#found[@]} -gt 0 ]; then
+        echo
+        warn "XFCE global shortcuts overlap Zap's keymap — they fire on the desktop"
+        warn "and never reach Zap. Remove any you want Zap to own (optional):"
+        for entry in "${found[@]}"; do
+            combo=${entry%%|*}; action=${entry#*|}
+            if [ "$combo" = "Super_L" ]; then
+                echo "    Super_L  ->  $action   (Whisker menu)"
+                echo "      Keep it on XFCE 4.20+ (tap-vs-hold is handled). On older XFCE it"
+                echo "      eats every Super+<letter> chord — remap or remove it:"
+            else
+                echo "    $combo  ->  $action"
+            fi
+            echo "      xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/$combo' -r"
+        done
+        echo "    GUI: Settings -> Keyboard -> Application Shortcuts."
+        echo "    (xfconf has no undo — the action shown above is what you'd re-add to restore it.)"
+    fi
+fi
+
+#############################################################################
 # Done
 #############################################################################
 
