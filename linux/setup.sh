@@ -277,27 +277,40 @@ if [ -n "${LITELLM_API_KEY:-}" ]; then
 fi
 
 #############################################################################
-# PHASE 5: Flag conflicting XFCE global shortcuts (report only)
+# PHASE 5: Reclaim Super+Q for Zap; flag other conflicting XFCE shortcuts
 #############################################################################
-# Zap's keymap (Terminator parity) claims Super+E (rename tab), Super+Y
-# (split down) and Super+A (split right). XFCE grabs some Super combos
-# globally — they fire on the desktop before the focused app, so the chord
-# never reaches Zap. We only report the overlap + the exact removal command;
-# we do not edit the user's desktop config. Defaults verified against
-# docs.xfce.org/xfce/xfwm4/keyboard_shortcuts (Super+E -> thunar is an XFCE
-# default; Super_L -> Whisker is the Xubuntu/Kali default and on XFCE < 4.20
-# it swallows every Super+<letter> chord).
+# Zap's keymap (Terminator parity) puts rename-tab on Super+Q (cmd-q) and the
+# splits on Super+Y / Super+A. XFCE grabs some Super combos globally — they fire
+# on the desktop before the focused app, so the chord never reaches Zap.
+# Super+Q has no XFCE default, so if something grabs it we reclaim it
+# automatically (mirroring linux-setup.sh). We no longer touch Super+E, so
+# XFCE's built-in file-manager shortcut keeps working. The split chords and the
+# bare-Super Whisker grab may carry defaults worth keeping, so those are
+# reported only. Defaults verified against docs.xfce.org/xfce/xfwm4/keyboard_shortcuts
+# (Super_L -> Whisker is the Xubuntu/Kali default and on XFCE < 4.20 it swallows
+# every Super+<letter> chord).
 
 if command -v xfconf-query &> /dev/null \
    && xfconf-query -c xfce4-keyboard-shortcuts -l &> /dev/null; then
-    # The <Super>{e,y,a} probes mirror the cmd-{e,y,a} Super bindings in
-    # configs/keybindings.yaml (rename_active_tab / add_down / add_right) —
-    # keep this list in sync if those Super bindings change. Super_L is the
+    # Reclaim Super+Q (cmd-q = rename_active_tab): clear any custom/default
+    # binding so the chord reaches Zap. Logged, not silent.
+    for scope in custom default; do
+        prop="/commands/$scope/<Super>q"
+        action=$(xfconf-query -c xfce4-keyboard-shortcuts -p "$prop" 2>/dev/null || true)
+        [ -z "$action" ] && continue
+        xfconf-query -c xfce4-keyboard-shortcuts -p "$prop" -r 2>/dev/null || true
+        log "Cleared XFCE Super+Q shortcut ($scope: $action) so Zap can use it for rename tab"
+    done
+
+    # Report (don't touch) the remaining overlaps — they may carry XFCE/user
+    # defaults the user wants to keep. The <Super>{y,a} probes mirror the
+    # cmd-{y,a} Super bindings in configs/keybindings.yaml (add_down / add_right)
+    # — keep this list in sync if those Super bindings change. Super_L is the
     # bare-Super Whisker grab. One lookup each: a non-empty value means the
-    # shortcut is bound. Carry the value alongside the combo (key is
-    # pipe-free, so '|' is a safe field separator) to avoid a second query.
+    # shortcut is bound. Carry the value alongside the combo (key is pipe-free,
+    # so '|' is a safe field separator) to avoid a second query.
     found=()
-    for combo in '<Super>e' '<Super>y' '<Super>a' 'Super_L'; do
+    for combo in '<Super>y' '<Super>a' 'Super_L'; do
         action=$(xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/$combo" 2>/dev/null || true)
         [ -n "$action" ] && found+=("$combo|$action")
     done

@@ -15,12 +15,14 @@
 #
 # Environment caveats:
 # - XFCE grabs some Super chords globally (before the focused app), so they
-#   never reach Zap. Notably Super+E is an XFCE default bound to thunar, which
-#   shadows cmd-e (rename_active_tab) here. XFCE Whisker also maps Super_L to
-#   its menu, which on XFCE < 4.20 swallows every Super+<letter> chord. Remove
-#   the ones you want Zap to own in Settings -> Keyboard -> Application
-#   Shortcuts (setup.sh Phase 5 reports the live conflicts + xfconf-query
-#   removal commands), otherwise cmd-* (Super) chords won't reach Zap.
+#   never reach Zap. rename_active_tab is on cmd-q (Super+Q); XFCE has no
+#   default there, so setup.sh Phase 5 clears any stray Super+Q binding for you
+#   (we deliberately leave Super+E alone so XFCE's file-manager shortcut keeps
+#   working). The split chords (Super+Y/Super+A) plus the bare-Super Whisker
+#   grab (Super_L, which on XFCE < 4.20 swallows every Super+<letter> chord) are
+#   reported by Phase 5 — remove the ones you want Zap to own in Settings ->
+#   Keyboard -> Application Shortcuts, otherwise those cmd-* (Super) chords
+#   won't reach Zap.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
@@ -37,7 +39,7 @@
 "notebookview:decrease_font_size":                 ctrl--
 "notebookview:reset_font_size":                    ctrl-0
 
-# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+E)
+# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+Q)
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none
@@ -56,7 +58,7 @@
 "workspace:activate_eighth_tab":                   none
 "workspace:move_tab_right":                        ctrl-shift-pagedown
 "workspace:move_tab_left":                         ctrl-shift-pageup
-"workspace:rename_active_tab":                     cmd-e
+"workspace:rename_active_tab":                     cmd-q
 
 # Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav + resize)
 "pane_group:add_down":                             cmd-y
