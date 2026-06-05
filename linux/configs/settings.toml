@@ -211,8 +211,15 @@ thinking_display_mode = "never_show"
 toast_duration_secs = 8
 
 # Don't restore the previous session at startup — fresh terminal every launch.
+#
+# Don't persist agent conversations to the local SQLite history database — so
+# nothing is written to disk and the /conversations history stays empty.
+# `general.persist_conversations` defaults to true; false is a real override
+# that makes write_updated_conversation_state() short-circuit before the sqlite
+# write (app/src/ai/agent/conversation.rs:2977). Independent of restore_session.
 [general]
-restore_session = false
+restore_session       = false
+persist_conversations = false
 
 # Don't display the empty-state block in a fresh terminal pane — go
 # straight to a clean prompt.
