@@ -13,11 +13,12 @@
 #
 # Windows caveat:
 # - A bare `cmd-<letter>` resolves to Win+<letter>, and Windows reserves some
-#   of those at the OS level (Win+E = Explorer, Win+A = Action Center) so they
-#   never reach an app. The split bindings below therefore use
+#   of those at the OS level (Win+E = Explorer, Win+Q = Search, Win+A = Action
+#   Center) so they never reach an app. The split bindings below therefore use
 #   `ctrl-cmd-<letter>` (Ctrl+Win+<letter>), which Windows does not reserve.
-#   Rename-tab uses `shift-cmd-E` (Shift+Win+E): the Ctrl+Win+E form did not
-#   fire on Windows in practice, and Shift+Win+E is likewise unreserved.
+#   Rename-tab uses `shift-cmd-Q` (Shift+Win+Q) to match the Linux Super+Q
+#   letter: bare Win+Q is OS-reserved (Search), and a Ctrl+Win rename chord did
+#   not fire on Windows in practice, so we keep the unreserved Shift+Win modifier.
 ---
 
 # Font / zoom (Terminator defaults: Ctrl++ / Ctrl+- / Ctrl+0).
@@ -34,7 +35,7 @@
 "notebookview:decrease_font_size":                 ctrl--
 "notebookview:reset_font_size":                    ctrl-0
 
-# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+E)
+# Tabs (linux-setup overrides: Ctrl+T, Ctrl+Tab, Ctrl+1..6, Super+Q)
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none
@@ -55,7 +56,7 @@
 "workspace:activate_eighth_tab":                   none
 "workspace:move_tab_right":                        ctrl-shift-pagedown
 "workspace:move_tab_left":                         ctrl-shift-pageup
-"workspace:rename_active_tab":                     shift-cmd-E
+"workspace:rename_active_tab":                     shift-cmd-Q
 
 # Panes / splits (linux-setup: Super+Y down / Super+A right; defaults for nav +
 # resize). On Windows the bare Win+<letter> forms are OS-reserved, so we prefix
