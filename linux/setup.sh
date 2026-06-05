@@ -7,8 +7,8 @@
 #
 # Shared helpers (colors / log / backup_file / prompt_yes_no) live in
 # linux/common.sh — they're lifted verbatim from /opt/linux-setup/linux-setup.sh
-# and annotated there. The Phase 0 self-update block below is also a
-# verbatim lift.
+# and annotated there. The Phase 0 self-update block below is lifted from there
+# too (with a local `cd "$SCRIPT_DIR"` — see its inline comment).
 
 set -eo pipefail
 
@@ -101,13 +101,17 @@ ZAP_KEYRING_KEY="AgentProviderSecrets"
 LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in linux/configs/settings.toml
 
 #############################################################################
-# PHASE 0: Self-Update (verbatim from linux-setup.sh:483-512)
+# PHASE 0: Self-Update (adapted from linux-setup.sh:483-512 — see inline note)
 #############################################################################
 
 log "Checking for script updates..."
 
-# git rev-parse/fetch/pull auto-traverse to the repo root, so no `cd` needed.
-# Re-exec below uses the absolute "$SCRIPT_DIR/setup.sh" path, also cwd-agnostic.
+# Anchor to this script's own repo before any git op. Under an orchestrator
+# (ct-kali-llm Phase 9) the cwd is arbitrary, so a bare `git rev-parse` would
+# either disable self-update ("not a git repo") or — if cwd sits in an unrelated
+# git tree — fetch/pull THAT repo. `cd "$SCRIPT_DIR"` (git traverses up to the
+# repo root) makes every git op below target this repo; re-exec is absolute too.
+cd "$SCRIPT_DIR"
 if git rev-parse --git-dir > /dev/null 2>&1; then
     log "Git repository detected, checking for updates..."
 
