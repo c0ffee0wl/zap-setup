@@ -340,6 +340,30 @@ if command -v xfconf-query &> /dev/null \
 fi
 
 #############################################################################
+# PHASE 6: Register the Warp/Zap Claude Code plugin marketplace (if claude present)
+#############################################################################
+# Zap is a Warp OSS fork, and warpdotdev/claude-code-warp ships the `warp`
+# plugin that wires Claude Code into the terminal. If the `claude` CLI is on
+# PATH we register the marketplace and install the plugin via claude's own
+# command line. claude enforces any managed `strictKnownMarketplaces` policy
+# itself and exits non-zero when a foreign marketplace is prohibited, so each
+# call sits in an `if` (exempt from `set -e`) and a failure only warns, never
+# aborts the installer. Re-running is safe: `marketplace add` replaces the
+# same-named entry and `install` is a no-op when the plugin is already there.
+if command -v claude &> /dev/null; then
+    log "Detected claude CLI — registering the claude-code-warp plugin marketplace"
+    if claude plugin marketplace add warpdotdev/claude-code-warp; then
+        if claude plugin install warp@claude-code-warp; then
+            log "Installed the warp plugin (warp@claude-code-warp)"
+        else
+            warn "Added the marketplace but 'claude plugin install warp@claude-code-warp' failed — install it later with /plugin"
+        fi
+    else
+        warn "Could not add the claude-code-warp marketplace (a managed claude policy may prohibit foreign marketplaces) — skipping"
+    fi
+fi
+
+#############################################################################
 # Done
 #############################################################################
 

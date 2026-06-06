@@ -592,6 +592,43 @@ function Invoke-AzureOptIn {
     return $true
 }
 
+function Add-ClaudeMarketplace {
+    # Zap is a Warp OSS fork, and warpdotdev/claude-code-warp ships the 'warp'
+    # plugin that wires Claude Code into the terminal. When the 'claude' CLI is
+    # on PATH we register the marketplace and install the plugin via claude's
+    # own command line. claude enforces any managed strictKnownMarketplaces
+    # policy itself and exits non-zero when a foreign marketplace is prohibited,
+    # so each call is wrapped to swallow that failure (PowerShell 7 turns a
+    # native non-zero exit into a terminating error under
+    # ErrorActionPreference='Stop', hence the try/catch + $LASTEXITCODE check -
+    # the same 5.1-safe idiom Phase 0 uses). Re-running is safe: 'marketplace
+    # add' replaces the same-named entry and 'install' is a no-op when the
+    # plugin is already installed.
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { return }
+    Write-Log "Detected claude CLI - registering the claude-code-warp plugin marketplace"
+
+    $marketAdded = $false
+    try {
+        & claude plugin marketplace add warpdotdev/claude-code-warp
+        if ($LASTEXITCODE -eq 0) { $marketAdded = $true }
+    } catch { }
+    if (-not $marketAdded) {
+        Write-Warn "Could not add the claude-code-warp marketplace (a managed claude policy may prohibit foreign marketplaces) - skipping"
+        return
+    }
+
+    $pluginInstalled = $false
+    try {
+        & claude plugin install warp@claude-code-warp
+        if ($LASTEXITCODE -eq 0) { $pluginInstalled = $true }
+    } catch { }
+    if ($pluginInstalled) {
+        Write-Log "Installed the warp plugin (warp@claude-code-warp)"
+    } else {
+        Write-Warn "Added the marketplace but installing warp@claude-code-warp failed - install it later with /plugin"
+    }
+}
+
 #############################################################################
 # PHASE 0: Self-update (mirror of setup.sh:104-132)
 #############################################################################
@@ -675,6 +712,12 @@ Set-CtrlDHandlers
 
 $script:AzureBaseUrl = $null
 $azureConfigured = Invoke-AzureOptIn
+
+#############################################################################
+# PHASE 6: Register the Warp/Zap Claude Code plugin marketplace (if claude present)
+#############################################################################
+
+Add-ClaudeMarketplace
 
 #############################################################################
 # Done
