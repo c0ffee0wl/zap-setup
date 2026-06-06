@@ -32,19 +32,21 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 #############################################################################
-# Logging (verbatim from linux-setup.sh:106-118)
+# Logging (label-only coloring; intentional divergence from linux-setup.sh:106-118,
+# which colors the whole line — matches ct-kali-llm/claude-litellm common.sh and
+# prevents the green from bleeding into message text)
 #############################################################################
 
 log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
 }
 
 warn() {
-    echo -e "${YELLOW}[WARNING] $1${NC}"
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 error() {
-    echo -e "${RED}[ERROR] $1${NC}"
+    echo -e "${RED}[ERROR]${NC} $1"
     exit 1
 }
 
