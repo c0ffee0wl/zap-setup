@@ -180,8 +180,16 @@ voice_input_enabled = false
 # Hide agent reasoning blocks entirely — keeps the transcript focused on
 # the actual answer. Enum verified in app/src/settings/ai.rs:349 (variants
 # show_and_collapse / always_show / never_show, snake_case).
+#
+# Hide the conversation-history view in the tools panel — the left-side
+# /conversations list. `show_conversation_history` defaults to true, so false
+# is a real override (description: "Whether conversation history appears in the
+# tools panel."). Key + default verified in app/src/settings/ai.rs:1740.
+# Complements general.persist_conversations = false (set below): that stops
+# history being written to disk, this hides the panel that would surface it.
 [agents.warp_agent.other]
-thinking_display_mode = "never_show"
+thinking_display_mode     = "never_show"
+show_conversation_history = false
 
 [agents.third_party]
 
