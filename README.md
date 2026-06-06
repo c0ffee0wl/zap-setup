@@ -66,6 +66,24 @@ Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► A
 
 Zap updates are managed by re-running this installer. There is no `apt upgrade` path because the `.deb` postinst does not register an APT repo.
 
+## Performance in a VM: enable 3D acceleration
+
+Zap renders on the GPU. It's a Warp OSS fork, and Warp draws its window and text through `wgpu` (Vulkan or OpenGL on Linux) instead of on the CPU. On bare metal you never notice. In a VM you do. If the guest has no 3D acceleration the GPU is emulated in software (Mesa's `llvmpipe`), and Zap gets sluggish: input lag while you type, and CPU that climbs trying to keep up. Scrolling stutters, and now and then the window never paints at all. It's the usual reason Zap feels slow in a VM, and you fix it on the host, not in this installer.
+
+The fix is to give the guest a real paravirtual GPU. On VMware Workstation Pro with a Windows host:
+
+1. Power off the VM. The toggle is greyed out while it runs or is suspended.
+2. Open VM → Settings → Hardware → Display.
+3. Tick **Accelerate 3D graphics**.
+4. Set **Graphics memory** to 1 GB or more.
+5. Boot the guest and install the VMware tools so the virtual GPU driver loads: `sudo apt install open-vm-tools open-vm-tools-desktop`, then reboot.
+
+The Windows host also needs a current GPU driver and DirectX; `dxdiag` on the host will confirm both. VMware maps the guest's OpenGL onto the host GPU through that.
+
+To check it worked, run `glxinfo | grep "OpenGL renderer"` in the guest. An accelerated guest reports an `SVGA3D` renderer; if you still see `llvmpipe`, the setting didn't take.
+
+When 3D acceleration genuinely isn't available, Zap still starts. Pin a backend so it stops hunting for one: `WGPU_BACKEND=gl zap` (Zap passes `WGPU_BACKEND` straight through to `wgpu`). Rendering stays in software, but it's stable.
+
 ## Windows
 
 A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
@@ -109,3 +127,15 @@ Windows-specific notes:
 - **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
 
 Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.
+
+### 3D acceleration in a VM
+
+The same applies on Windows. Zap is GPU-rendered, so a Windows guest with no 3D acceleration falls back to the Microsoft Basic Render Driver, and you get the same lag and CPU drain. On VMware Workstation Pro with a Windows host and a Windows guest:
+
+1. Power off the VM.
+2. Open VM → Settings → Hardware → Display, tick **Accelerate 3D graphics**, and set **Graphics memory** to 1 GB or more.
+3. Boot the guest and install the full VMware Tools package. It ships the SVGA 3D WDDM driver that Zap renders through. Reboot afterwards.
+
+The Windows host needs a current GPU driver and DirectX, which `dxdiag` will confirm. To check the guest picked it up, run `dxdiag` there too: the Display tab should name the VMware SVGA 3D adapter with Direct3D acceleration enabled rather than the Basic Render Driver.
+
+The installer already sets the backend to DirectX 12 (`system.preferred_graphics_backend = "dx_12"`, a Windows-only key), which is the right choice once real acceleration is in place. If DX12 still struggles in your VM, switch it from Settings → Features → Preferred graphics backend, or set `WGPU_BACKEND` (for example `gl`) before launching.

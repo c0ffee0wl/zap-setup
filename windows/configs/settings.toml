@@ -87,6 +87,18 @@ focus_pane_on_hover = true
 [session.new_session_shell_override]
 executable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
+# Prefer the DirectX 12 graphics backend. Windows-only key
+# (system.preferred_graphics_backend; SupportedPlatforms::WINDOWS in
+# app/src/settings/gpu.rs over the GraphicsBackend enum). It's a soft adapter
+# preference used to rank GPUs, not a hard lock, so Zap still falls back when
+# DX12 isn't usable. The value is the convert_case Case::Snake literal of the
+# `Dx12` variant — `dx_12`, NOT serde's `dx12` (settings_value derive,
+# crates/settings_value_derive/src/lib.rs). In a VM, real 3D acceleration from
+# the host matters far more than this backend choice — see the README
+# "3D acceleration in a VM" notes.
+[system]
+preferred_graphics_backend = "dx_12"
+
 # Disable proactive Active AI (the always-on assistant) — too intrusive for a
 # Terminator-style terminal.
 [agents.warp_agent.active_ai]
