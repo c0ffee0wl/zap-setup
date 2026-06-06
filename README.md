@@ -1,6 +1,6 @@
 # zap-setup
 
-Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetches the latest `.deb` from upstream, installs it via `apt`, and writes four opinionated configs: a Terminator "Black on White" theme, Terminator-parity keybindings, a `settings.toml` wired to a local [LiteLLM](https://docs.litellm.ai/) proxy, and an `mcp.json` with auth-free documentation MCP servers (Microsoft Learn, DeepWiki).
+Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetches the latest `.deb` from upstream, installs it via `apt`, and writes four opinionated configs: a Terminator "Black on White" theme, Terminator-parity keybindings, a `settings.toml` wired to a local [LiteLLM](https://docs.litellm.ai/) proxy, and an `mcp.json` with auth-free documentation MCP servers (Microsoft Learn, DeepWiki). If the `claude` CLI is installed, it also registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`), failing quietly when a managed policy forbids foreign marketplaces.
 
 Runs on Debian and Kali (Bash) as a regular user. amd64 only; Zap publishes no arm64 `.deb`.
 
@@ -53,7 +53,7 @@ Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► A
 
 ## Important Files
 
-- `linux/setup.sh`: phases 0-4 (self-update, apt prereqs, .deb fetch, config render + install incl. mcp.json, optional keyring write)
+- `linux/setup.sh`: phases 0-6 (self-update, apt prereqs, .deb fetch, config render + install incl. mcp.json, optional keyring write, XFCE Super+Q reclaim, optional Claude Code plugin marketplace when `claude` is present)
 - `linux/common.sh`: shared helpers (colors, logging, `backup_file`, `prompt_yes_no`); blocks lifted verbatim from `/opt/linux-setup/linux-setup.sh` and annotated with their upstream line ranges
 - `linux/configs/settings.toml`: font, theme selector, LiteLLM provider entry; uses the `__HOME__` placeholder
 - `linux/configs/keybindings.yaml`: Terminator-parity keybindings
@@ -68,7 +68,7 @@ Zap updates are managed by re-running this installer. There is no `apt upgrade` 
 
 ## Windows
 
-A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it.
+A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
 
 Requires Windows 10 build 18362+ (ConPTY). x64.
 

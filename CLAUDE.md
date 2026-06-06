@@ -95,6 +95,14 @@ Zap loads MCP server definitions from `~/.zap/.mcp.json` at startup and re-reads
 - Each server has exactly one of `command` (stdio) or `url` (HTTP/SSE) — validated in `app/src/ai/agent_sdk/mcp_config.rs`.
 - **Do not bundle MCPs that require auth headers.** Zap has no keyring slot for MCP headers, so a token in `headers.Authorization` would land in a world-readable JSON file. Servers like GitHub/Linear/Sentry stay user-added, not bundled.
 
+### Phase 6 — Claude Code plugin marketplace (graceful-fail is load-bearing)
+
+The final phase of both installers registers the Warp/Zap Claude Code plugin when the `claude` CLI is on `PATH`: `claude plugin marketplace add warpdotdev/claude-code-warp` followed by `claude plugin install warp@claude-code-warp` (that repo is a marketplace named `claude-code-warp` whose one plugin is `warp`). Zap is a Warp OSS fork, so this is the integration that wires Claude Code into the terminal.
+
+These run through `claude` itself precisely so a managed `strictKnownMarketplaces` policy is enforced upstream — on a locked-down host `claude` exits non-zero and the installer must **warn and continue, never abort**. That graceful-fail is load-bearing, not incidental: keep each call wrapped so its failure is swallowed (Bash puts them in `if` conditions, exempt from `set -e`; PowerShell uses `try/catch` + a `$LASTEXITCODE` check, since PowerShell 7.3+ turns a native non-zero exit into a terminating error under `$ErrorActionPreference = 'Stop'`). Do not "fix" the bare `catch {}` / `if`-guards. Re-runs are safe: `marketplace add` replaces the same-named entry and `install` no-ops when already installed.
+
+Linux **inlines** the phase in `setup.sh` (matching Phase 4/5). Windows factors it into `Add-ClaudeMarketplace` in `setup.ps1` (matching `Install-Zap` / `Invoke-AzureOptIn`, which — like all non-trivial Windows phase logic — are functions defined in `setup.ps1`, not in `common.ps1`). Preserve that asymmetry; `common.ps1`/`common.sh` are for shared primitives only.
+
 ## Windows port (`windows/`)
 
 `windows/setup.ps1` mirrors `linux/setup.sh` phase-for-phase; `windows/common.ps1` mirrors `common.sh` (`Write-Log`/`Write-Warn`/`Write-Err`, `Backup-File`, `Confirm-YesNo`, `Install-WithPrompt`). `windows/configs/keybindings.yaml` and `windows/configs/mcp.json` are **byte-identical copies** of the Linux payloads (the keymap's `cmd-*` maps to the Win key on Windows); only `windows/configs/settings.toml` is Windows-specific. There is no theme YAML — Dracula is built in.
