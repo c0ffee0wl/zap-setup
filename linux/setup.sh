@@ -155,7 +155,14 @@ install_zap_from_github() {
 
     log "Resolving latest Zap release on github.com/${repo}..."
     local meta tag url latest_ver installed_ver tmp
-    meta=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/${repo}/releases?per_page=30")
+    # Match claude-litellm's hardened curl (linux/common.sh:42,82): -q (must come
+    # first) makes curl ignore the user's ~/.curlrc — security distros like REMnux
+    # ship one that forces a malformed IE11 UA + extra headers, tripping
+    # Cloudflare's bot challenge (403) — and -A presents a modern browser UA, since
+    # UA-filtering CDNs/proxies 403 curl's default. Both the API query and the .deb
+    # fetch get them.
+    local ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+    meta=$(curl -q --proto '=https' --tlsv1.2 -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
 
     # Walk releases newest-first and pick the first one publishing a
     # zap_*_amd64.deb asset. We prefer this over /releases/latest so that a
@@ -180,7 +187,7 @@ install_zap_from_github() {
     log "Installing $pkg $latest_ver (was: ${installed_ver:-none})"
     tmp=$(mktemp --suffix=.deb)
     trap 'rm -f "$tmp"' RETURN
-    curl --proto '=https' --tlsv1.2 -fSL --progress-bar -o "$tmp" "$url"
+    curl -q --proto '=https' --tlsv1.2 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
     # mktemp creates 0600; relax so the _apt sandbox user can read the file
     # (otherwise apt falls back to unsandboxed root fetch and prints a notice).
     chmod 0644 "$tmp"
