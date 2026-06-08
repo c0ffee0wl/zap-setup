@@ -135,11 +135,32 @@ voice_input_enabled = false
 # /conversations list. `show_conversation_history` defaults to true, so false
 # is a real override (description: "Whether conversation history appears in the
 # tools panel."). Key + default verified in app/src/settings/ai.rs:1740.
-# Complements general.persist_conversations = false (set below): that stops
-# history being written to disk, this hides the panel that would surface it.
+# Independent of persistence: this only hides the /conversations panel. We do
+# NOT disable persist_conversations — that breaks the BYOP agent (see the
+# [general] note below), so conversation history is still written to disk.
 [agents.warp_agent.other]
 thinking_display_mode     = "never_show"
 show_conversation_history = false
+
+# BYOP auto-compaction — DISABLED. Once a conversation passes its context
+# threshold (~170k tokens, byop_compaction/overflow.rs FALLBACK), Zap locally
+# summarizes old turns. The head/tail cut (byop_compaction/algorithm.rs
+# split_turn) is NOT tool-call-group-aware — the boundary can land between an
+# assistant tool_call and its tool_result. That split is persisted in the
+# conversation's compaction_state and replayed on every later request, which
+# trips the byop_readiness gate (app/src/ai/byop_readiness/mod.rs): the agent
+# then dies with "Can't continue this conversation: an earlier tool result is
+# missing or corrupted … Start a new conversation or fork from an earlier
+# point" — deterministically, on every turn, until the conversation is
+# forked/restarted. The readiness gate itself has no off switch (the spec
+# forbids a feature flag), so we disable the compaction that feeds it broken
+# history. `auto = false` makes is_overflow() always return false, so no
+# summarization runs and the split never forms. Trade-off: a very long
+# conversation eventually hits the provider's real context limit instead —
+# fork or start fresh when a session grows huge. Key + default (true) verified
+# in app/src/settings/ai.rs:1814 (toml_path "agents.byop_compaction.auto").
+[agents.byop_compaction]
+auto = false
 
 # NOTE: no AI provider is configured by default. The installer's Azure opt-in
 # appends an `[agents.warp_agent]` section with a `providers = [...]` inline-
@@ -152,14 +173,20 @@ toast_duration_secs = 8
 
 # Don't restore the previous session at startup — fresh terminal every launch.
 #
-# Don't persist agent conversations to the local SQLite history database — so
-# nothing is written to disk and the /conversations history stays empty.
-# `general.persist_conversations` defaults to true; false is a real override
-# that makes write_updated_conversation_state() short-circuit before the sqlite
-# write (app/src/ai/agent/conversation.rs:2977). Independent of restore_session.
+# persist_conversations is deliberately LEFT AT ITS DEFAULT (true). Do NOT set it
+# to false. The BYOP agent commits every tool result through the conversation
+# persistence path, and controller preflight refuses to dispatch a request whose
+# tool result could not be persisted: ensure_can_persist_byop_preflight_state()
+# returns "conversation persistence is disabled" when persist_conversations=false
+# (app/src/ai/agent/conversation.rs:2919), so the readiness gate then blocks with
+# MissingResultWithoutRepairSource and the agent dies on the FIRST tool call with
+# "an earlier tool result is missing or corrupted" — it hangs at "Warping", then
+# blocks. In other words persist_conversations=false makes the BYOP agent
+# completely unusable, so we keep the default. Conversations are written to the
+# local SQLite db; if you need them gone, delete the db out-of-band rather than
+# disabling persistence.
 [general]
-restore_session       = false
-persist_conversations = false
+restore_session = false
 
 # Don't display the empty-state block in a fresh terminal pane — go straight to
 # a clean prompt.
