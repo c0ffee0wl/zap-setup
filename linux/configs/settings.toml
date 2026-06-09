@@ -82,7 +82,7 @@ zoom_level = 125
 workspace_decoration_visibility = "always_show"
 
 # Vertical tabs ENABLED by default — `appearance.vertical_tabs.enabled`
-# (the use_vertical_tabs key, app/src/workspace/tab_settings.rs:478) defaults to
+# (the use_vertical_tabs key, app/src/workspace/tab_settings.rs) defaults to
 # false, so we explicitly write it true. The remaining keys shape the vertical
 # tab bar (also reachable via Settings → Appearance → Tabs).
 # Keys + enum variants verified in app/src/workspace/tab_settings.rs:
@@ -121,7 +121,7 @@ focus_pane_on_hover = true
 # above: it keeps re-runs from showing a spurious "overwrite?" diff after Zap
 # rewrites the file on first save. Keys are alphabetized for the same reason.
 #
-# Per-model capability metadata (AgentProviderModel, app/src/settings/ai.rs:867):
+# Per-model capability metadata (AgentProviderModel, app/src/settings/ai.rs):
 # context_window / max_output_tokens are token budgets (0 = unknown);
 # reasoning enables CoT; image/pdf/audio are tri-state force flags
 # (present = override models.dev inference, absent = auto). tool_call
@@ -162,13 +162,13 @@ enabled = false
 # (AI) input is actually a shell command and silently treat it as one — keep
 # the agent input an AI prompt. This is the "Autodetect terminal commands in
 # agent input" toggle; it defaults to true, so false is a real override. Key +
-# default verified in app/src/settings/ai.rs:1161.
+# default verified in app/src/settings/ai.rs.
 #
 # Keep commands the AI agent runs OUT of normal command history (up-arrow,
 # Ctrl-R search, inline history menu) — agent activity shouldn't pollute the
 # hand-typed command history. This matches Zap's default (false); we set it
 # explicitly to document the intent. Key + default verified in
-# app/src/settings/ai.rs:1723.
+# app/src/settings/ai.rs.
 [agents.warp_agent.input]
 nld_in_terminal_enabled              = false
 ai_auto_detection_enabled            = false
@@ -178,13 +178,13 @@ include_agent_commands_in_history    = false
 voice_input_enabled = false
 
 # Hide agent reasoning blocks entirely — keeps the transcript focused on
-# the actual answer. Enum verified in app/src/settings/ai.rs:349 (variants
+# the actual answer. Enum verified in app/src/settings/ai.rs (variants
 # show_and_collapse / always_show / never_show, snake_case).
 #
 # Hide the conversation-history view in the tools panel — the left-side
 # /conversations list. `show_conversation_history` defaults to true, so false
 # is a real override (description: "Whether conversation history appears in the
-# tools panel."). Key + default verified in app/src/settings/ai.rs:1740.
+# tools panel."). Key + default verified in app/src/settings/ai.rs.
 # Independent of persistence: this only hides the /conversations panel. We do
 # NOT disable persist_conversations — that breaks the BYOP agent (see the
 # [general] note below), so conversation history is still written to disk.
@@ -208,7 +208,7 @@ show_conversation_history = false
 # summarization runs and the split never forms. Trade-off: a very long
 # conversation eventually hits the provider's real context limit instead —
 # fork or start fresh when a session grows huge. Key + default (true) verified
-# in app/src/settings/ai.rs:1814 (toml_path "agents.byop_compaction.auto").
+# in app/src/settings/ai.rs (toml_path "agents.byop_compaction.auto").
 [agents.byop_compaction]
 auto = false
 
@@ -246,7 +246,7 @@ toast_duration_secs = 8
 # persistence path, and controller preflight refuses to dispatch a request whose
 # tool result could not be persisted: ensure_can_persist_byop_preflight_state()
 # returns "conversation persistence is disabled" when persist_conversations=false
-# (app/src/ai/agent/conversation.rs:2919), so the readiness gate then blocks with
+# (app/src/ai/agent/conversation.rs), so the readiness gate then blocks with
 # MissingResultWithoutRepairSource and the agent dies on the FIRST tool call with
 # "an earlier tool result is missing or corrupted" — it hangs at "Warping", then
 # blocks. In other words persist_conversations=false makes the BYOP agent
@@ -267,10 +267,25 @@ show_terminal_zero_state_block = false
 #
 # Disable the red error underline drawn under commands Zap thinks are
 # mistyped. Defaults to true, so false is a real override. Key + default
-# verified in app/src/settings/input.rs:64 (toml_path
+# verified in app/src/settings/input.rs (toml_path
 # "terminal.input.error_underlining_enabled").
 [terminal.input]
 show_hint_text            = false
 input_box_type_setting    = "classic"
 honor_ps1                 = true
 error_underlining_enabled = false
+
+# Open files (project explorer, global search, file links, code panels) in
+# Zap's own built-in editor instead of the OS default app. Default is
+# "system_default"; "zap" is a real override (enum EditorChoice; convert_case
+# snake renders the variant as "zap"). Key + default verified in
+# app/src/util/file/external_editor/settings.rs (EditorSettings group).
+[code.editor]
+open_file_editor = "zap"
+
+# Don't auto-insert the matching quote / parenthesis / bracket when typing the
+# opening one (terminal command editor and code editor alike). Defaults to
+# true, so false is a real override. Key + default verified in
+# app/src/settings/editor.rs (toml_path "text_editing.autocomplete_symbols").
+[text_editing]
+autocomplete_symbols = false
