@@ -196,7 +196,13 @@ show_terminal_zero_state_block = false
 # Terminal input: hide the inline autosuggestion hint, use the classic
 # (single-line) input box, and use the shell's own prompt instead of
 # synthesising Zap's.
+#
+# Disable the red error underline drawn under commands Zap thinks are
+# mistyped. Defaults to true, so false is a real override. Key + default
+# verified in app/src/settings/input.rs:64 (toml_path
+# "terminal.input.error_underlining_enabled").
 [terminal.input]
-show_hint_text         = false
-input_box_type_setting = "classic"
-honor_ps1              = true
+show_hint_text            = false
+input_box_type_setting    = "classic"
+honor_ps1                 = true
+error_underlining_enabled = false

@@ -5,7 +5,7 @@
 #
 # Keymap engine notes:
 # - Valid modifiers are exactly: ctrl, alt, shift, cmd, meta, cmdorctrl
-#   (crates/warpui_core/src/keymap.rs:909-920). There is NO `logo`/`super`
+#   (crates/warpui_core/src/keymap.rs). There is NO `logo`/`super`
 #   token — `cmd-*` is the cross-platform primary modifier (Cmd on Mac,
 #   Super on Linux, the Windows key here); `cmdorctrl` = Ctrl on Windows.
 # - `shift+letter` must be uppercase (ctrl-shift-N, not ctrl-shift-n).

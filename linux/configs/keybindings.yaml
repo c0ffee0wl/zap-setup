@@ -5,8 +5,8 @@
 #
 # Keymap engine notes:
 # - Valid modifiers are exactly: ctrl, alt, shift, cmd, meta, cmdorctrl
-#   (crates/warpui_core/src/keymap.rs:909-920; parsed by Keystroke::parse via
-#   app/src/keyboard.rs:201). `cmd-*` is the cross-platform primary modifier;
+#   (crates/warpui_core/src/keymap.rs; parsed by Keystroke::parse via
+#   app/src/keyboard.rs). `cmd-*` is the cross-platform primary modifier;
 #   on Linux it maps to the Super key. There is NO `logo`/`super` token —
 #   Keystroke::parse rejects it, so a binding like `ctrl-shift-logo-D` silently
 #   fails to load.
