@@ -81,6 +81,18 @@
 # Window
 "root_view:toggle_fullscreen":                     f11
 "workspace:hide_warp":                             ctrl-shift-alt-A
+# Left panel (Warp Drive: sessions / agents / files). Zap ships this action
+# UNBOUND — the title-bar "Search sessions, agents, files..." click is the only
+# built-in way in — so bind it to match the live host config. ctrl-shift-> is
+# German-QWERTZ-reachable: `>` is Shift on the <>| key left of Z. (NB: Zap's
+# default also maps ctrl-shift-> to terminal:ask_ai_assistant_last_block, but
+# that binding is gated off when Agent Mode is enabled, so no clash in practice.)
+"workspace:toggle_left_panel":                     ctrl-shift->
+# Right panel — labelled "Toggle code review" in Settings (it hosts the
+# code-review / diff view). Zap's default ctrl-shift-+ is unreachable on a German
+# layout (`+` is unshifted; Shift yields `*`), so bind to ctrl-shift-* (`*` is
+# Shift on the + key) to match the live host config.
+"workspace:toggle_right_panel":                    ctrl-shift-*
 
 # Search / edit (linux-setup override: Ctrl+F instead of Ctrl+Shift+F).
 # The three *_find actions are bound to the same chord so Ctrl+F opens
@@ -96,8 +108,9 @@
 "terminal:clear_blocks":                           ctrl-shift-R
 
 # Beyond Terminator (productivity add, reachable because linux-setup
-# moved search off Ctrl+Shift+F onto Ctrl+F).
-"workspace:show_global_search":                    ctrl-shift-F
+# moved search off Ctrl+Shift+F onto Ctrl+F). Action is open_global_search —
+# show_global_search is not a real Zap action and silently fails to load.
+"workspace:open_global_search":                    ctrl-shift-F
 
 # Settings
 "workspace:show_settings_keyboard_shortcuts_page": ctrl-shift-K

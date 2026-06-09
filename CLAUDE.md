@@ -105,7 +105,7 @@ Linux **inlines** the phase in `setup.sh` (matching Phase 4/5). Windows factors 
 
 ## Windows port (`windows/`)
 
-`windows/setup.ps1` mirrors `linux/setup.sh` phase-for-phase; `windows/common.ps1` mirrors `common.sh` (`Write-Log`/`Write-Warn`/`Write-Err`, `Backup-File`, `Confirm-YesNo`, `Install-WithPrompt`). `windows/configs/keybindings.yaml` and `windows/configs/mcp.json` are **byte-identical copies** of the Linux payloads (the keymap's `cmd-*` maps to the Win key on Windows); only `windows/configs/settings.toml` is Windows-specific. There is no theme YAML — Dracula is built in.
+`windows/setup.ps1` mirrors `linux/setup.sh` phase-for-phase; `windows/common.ps1` mirrors `common.sh` (`Write-Log`/`Write-Warn`/`Write-Err`, `Backup-File`, `Confirm-YesNo`, `Install-WithPrompt`). `windows/configs/mcp.json` is a **byte-identical copy** of the Linux payload; `windows/configs/keybindings.yaml` and `windows/configs/settings.toml` are Windows-specific. keybindings.yaml shares every non-`cmd` chord verbatim and diverges only where Windows reserves a bare `cmd-*` (Win-key) chord at the OS level: the split bindings become `ctrl-cmd-*` (Ctrl+Win), `rename_active_tab` becomes `shift-cmd-Q`, and the header/comments are rewritten for the Windows key model. There is no theme YAML — Dracula is built in.
 
 ### `windows/*.ps1` must be pure ASCII (no BOM)
 
