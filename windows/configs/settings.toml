@@ -80,6 +80,13 @@ show_details_on_hover = true
 [appearance.panes]
 focus_pane_on_hover = true
 
+# Hide the horizontal dividers Zap draws between terminal command blocks —
+# a cleaner, more classic-terminal look. Defaults to true, so false is a real
+# override. Key + default verified in app/src/terminal/block_list_settings.rs
+# (toml_path "appearance.blocks.show_block_dividers").
+[appearance.blocks]
+show_block_dividers = false
+
 # Open new sessions in Windows PowerShell 5.1 instead of Zap's default shell.
 # NewSessionShell is an externally-tagged enum; the `executable` table key maps
 # to its Executable(String) variant. Single-quoted TOML literal so the

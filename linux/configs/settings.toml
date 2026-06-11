@@ -109,6 +109,13 @@ show_details_on_hover = true
 [appearance.panes]
 focus_pane_on_hover = true
 
+# Hide the horizontal dividers Zap draws between terminal command blocks —
+# a cleaner, more classic-terminal look. Defaults to true, so false is a real
+# override. Key + default verified in app/src/terminal/block_list_settings.rs
+# (toml_path "appearance.blocks.show_block_dividers").
+[appearance.blocks]
+show_block_dividers = false
+
 # LiteLLM provider — proxy assumed to be listening on its default port 4000
 # at localhost (LiteLLM setup is out of scope for this installer).
 #
