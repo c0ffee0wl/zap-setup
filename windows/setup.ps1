@@ -96,6 +96,12 @@ $Repo             = 'zerx-lab/zap'
 $AssetRegex       = '^ZapSetup\.exe$'
 # Inno Setup AppId for the OSS channel -> per-user uninstall key (DisplayVersion).
 $UninstallKeyName = 'zap-oss_is1'
+# Per-user (HKCU) first, then all-users (HKLM) and 32-bit-view fallbacks.
+$UninstallRegKeys = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName"
+)
 
 $ConfigsDir = Join-Path $PSScriptRoot 'configs'
 
@@ -123,12 +129,7 @@ $AzureProviderId    = 'azure-openai'
 
 function Get-InstalledZapVersion {
     # Read DisplayVersion from the Inno per-user (HKCU) / all-users (HKLM) keys.
-    $keys = @(
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
-        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
-        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName"
-    )
-    foreach ($k in $keys) {
+    foreach ($k in $UninstallRegKeys) {
         try {
             $v = (Get-ItemProperty -LiteralPath $k -ErrorAction Stop).DisplayVersion
             if ($v) { return [string]$v }
@@ -140,12 +141,7 @@ function Get-InstalledZapVersion {
 function Get-ZapInstallDir {
     # Where Inno put the program files - InstallLocation from the uninstall key,
     # falling back to the directory of the UninstallString ({app}\unins000.exe).
-    $keys = @(
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
-        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName",
-        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$UninstallKeyName"
-    )
-    foreach ($k in $keys) {
+    foreach ($k in $UninstallRegKeys) {
         try {
             $p = Get-ItemProperty -LiteralPath $k -ErrorAction Stop
             if ($p.InstallLocation) { return ([string]$p.InstallLocation).TrimEnd('\') }
