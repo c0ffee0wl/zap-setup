@@ -46,8 +46,15 @@ alt_screen_padding = { custom = { uniform_padding = 8.0 } }
 
 # UI zoom (percentage). 125 = 125% — slightly larger without bumping the
 # monospace font size.
+#
+# Give each tab its own left (tools) panel visibility instead of sharing one
+# shown/hidden state across all tabs. Defaults to true ("Tools panel visibility
+# is consistent across tabs"), so false is a real override. Key + default
+# verified in app/src/window_settings.rs (toml_path
+# "appearance.window.left_panel_visibility_across_tabs").
 [appearance.window]
-zoom_level = 125
+zoom_level                        = 125
+left_panel_visibility_across_tabs = false
 
 # Always show the workspace decoration in the tab bar (vs auto-hide).
 [appearance.tabs]
