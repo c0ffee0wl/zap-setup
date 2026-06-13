@@ -139,9 +139,104 @@ fi
 # PHASE 1: Prerequisite packages
 #############################################################################
 
-log "Installing prerequisite packages (curl, jq, ca-certificates, fonts-firacode, libsecret-tools)..."
+log "Installing prerequisite packages (curl, jq, ca-certificates, fonts-firacode, libsecret-tools, mesa-utils)..."
 sudo apt-get update -qq
-sudo apt-get install -y curl jq ca-certificates fonts-firacode libsecret-tools
+# mesa-utils provides glxinfo, used by the 3D-acceleration check below.
+sudo apt-get install -y curl jq ca-certificates fonts-firacode libsecret-tools mesa-utils
+
+#############################################################################
+# GPU preflight: warn if 3D acceleration is missing (Zap renders on the GPU)
+#############################################################################
+# Zap is a Warp OSS fork and draws its window + text through wgpu. Without 3D
+# acceleration the GPU is emulated in software (Mesa llvmpipe) and Zap turns
+# sluggish — input lag, scroll stutter, high CPU, the odd unpainted window.
+# Best-effort and non-blocking; this never aborts the install.
+#
+# The OpenGL *renderer string* is the only reliable signal, so we read it with
+# glxinfo (mesa-utils, installed in Phase 1) run as the invoking user — it needs
+# the user's $DISPLAY, and VMware reports acceleration per-user, so it must run
+# as the account that will launch Zap. We flag ONLY a known software rasterizer.
+# Two deliberate non-checks:
+#   - Ignore the "Accelerated: yes/no" line. VMware's host-backed SVGA3D driver
+#     reports "Accelerated: no" while 3D is genuinely working, so keying off it
+#     would false-positive on every working VMware guest.
+#   - Match the whole token "llvmpipe", never a bare "llvm": the accelerated
+#     SVGA3D renderer string literally contains "LLVM" (its shader compiler).
+# vulkaninfo is deliberately NOT used: VMware exposes no guest Vulkan ICD, so a
+# fully accelerated VMware guest shows only lavapipe under Vulkan (false +ve).
+
+check_gpu_acceleration() {
+    if ! command -v glxinfo &> /dev/null; then
+        warn "glxinfo not found (mesa-utils); skipping the 3D-acceleration check."
+        return 0
+    fi
+
+    local renderer
+    renderer=$(glxinfo 2>/dev/null | sed -n 's/.*OpenGL renderer string: //p' | head -n1)
+    if [ -z "$renderer" ]; then
+        warn "Could not read the OpenGL renderer (no X/Wayland display reachable?); skipping the 3D-acceleration check."
+        return 0
+    fi
+
+    # Accelerated unless the renderer is a known software rasterizer (see above
+    # for why we match the whole token, not a bare "llvm"). Lowercase the string
+    # so the match is case-insensitive (covers SWRAST / Software Rasterizer).
+    local soft_re='llvmpipe|softpipe|swrast|software rasterizer|lavapipe'
+    if [[ ! "${renderer,,}" =~ $soft_re ]]; then
+        log "3D acceleration active (renderer: $renderer)"
+        return 0
+    fi
+
+    # --- Software rendering: warn and explain how to fix -------------------
+    local vmware_doc="https://techdocs.broadcom.com/us/en/vmware-cis/desktop-hypervisors/workstation-pro/17-0/using-vmware-workstation-pro/configuring-and-managing-virtual-machines/configure-display-settings-for-a-virtual-machine/prepare-a-virtual-machine-to-use-accelerated-3d-graphics.html"
+    local vbox_doc="https://www.virtualbox.org/manual/ch03.html#settings-display"
+
+    echo
+    warn "3D (GPU) acceleration is NOT active — Zap is rendering in software (renderer: $renderer)."
+    echo "    Zap renders on the GPU; in software expect input lag, scroll stutter, high"
+    echo "    CPU, and occasional unpainted windows."
+    echo
+
+    local virt="unknown"
+    if command -v systemd-detect-virt &> /dev/null; then
+        virt=$(systemd-detect-virt --vm 2>/dev/null || true)
+    fi
+
+    case "$virt" in
+        vmware)
+            echo "    This is a VMware VM. Enable 3D for the guest:"
+            echo "      1. Power off the VM (do not just suspend it)."
+            echo "      2. VM -> Settings -> Hardware -> Display -> check 'Accelerate 3D graphics'."
+            echo "      3. Make sure open-vm-tools (VMware Tools) is installed in the guest."
+            echo "      Docs: $vmware_doc"
+            ;;
+        oracle)
+            echo "    This is a VirtualBox VM. Enable 3D for the guest:"
+            echo "      1. Install the Guest Additions in the guest, then power off the VM."
+            echo "      2. Settings -> Display -> Screen: Graphics Controller = VMSVGA,"
+            echo "         tick 'Enable 3D Acceleration', and give it ~128MB video memory."
+            echo "      Docs: $vbox_doc"
+            ;;
+        none)
+            echo "    No virtual machine detected — a real GPU should not fall back to llvmpipe."
+            echo "    Your GPU driver / Mesa is likely missing or misconfigured; install the"
+            echo "    vendor driver (or mesa for Intel/AMD) and recheck with: glxinfo | grep renderer"
+            ;;
+        *)
+            echo "    If this is a VMware or VirtualBox VM, enable 3D in its display settings:"
+            echo "      VMware:     $vmware_doc"
+            echo "      VirtualBox: $vbox_doc"
+            echo "    Otherwise (bare metal or another hypervisor) update your GPU driver / Mesa."
+            ;;
+    esac
+
+    echo
+    echo "    If acceleration truly isn't available, pin a backend so Zap stops hunting:"
+    echo "      WGPU_BACKEND=gl zap"
+    echo
+}
+
+check_gpu_acceleration
 
 #############################################################################
 # PHASE 2: Install Zap from latest GitHub .deb

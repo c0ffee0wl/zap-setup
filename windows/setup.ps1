@@ -124,6 +124,100 @@ $SecretsFile        = Join-Path $StateDir "$SecretsServiceName-$SecretsKey"
 $AzureProviderId    = 'azure-openai'
 
 #############################################################################
+# Phase 1 helper - warn if the GPU lacks 3D acceleration (Zap renders on GPU)
+#############################################################################
+
+function Test-GpuAcceleration {
+    # Zap is a Warp OSS fork and draws its window + text through wgpu (DirectX
+    # on Windows). Without 3D acceleration the GPU is emulated in software (the
+    # Microsoft Basic Render Driver) and Zap turns sluggish - input lag, scroll
+    # stutter, high CPU. Best-effort and non-blocking; this never aborts.
+    #
+    # Signal: Win32_VideoController.Name. The software fallback is named
+    # 'Microsoft Basic Render Driver' / 'Microsoft Basic Display Adapter' - the
+    # same discriminator dxdiag's own logic leans on. We warn only when EVERY
+    # adapter is one of those (a real / VMware SVGA 3D / VirtualBox adapter means
+    # acceleration is available). dxdiag (Display tab -> Direct3D Acceleration)
+    # is the heavier authoritative cross-check; we point the user at it rather
+    # than spawn it.
+    $names = @()
+    try {
+        $names = @((Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop).Name |
+            Where-Object { $_ })
+    } catch {
+        Write-Warn "Could not query the display adapter (WMI); skipping the 3D-acceleration check."
+        return
+    }
+    if ($names.Count -eq 0) {
+        Write-Warn "No display adapter reported by WMI; skipping the 3D-acceleration check."
+        return
+    }
+
+    $softwareRe  = 'Microsoft Basic Render Driver|Microsoft Basic Display Adapter'
+    $accelerated = @($names | Where-Object { $_ -notmatch $softwareRe })
+    if ($accelerated.Count -gt 0) {
+        Write-Log "3D acceleration available (adapter: $($accelerated -join ', '))"
+        return
+    }
+
+    # --- Software rendering: warn and explain how to fix -------------------
+    $vmwareDoc = 'https://techdocs.broadcom.com/us/en/vmware-cis/desktop-hypervisors/workstation-pro/17-0/using-vmware-workstation-pro/configuring-and-managing-virtual-machines/configure-display-settings-for-a-virtual-machine/prepare-a-virtual-machine-to-use-accelerated-3d-graphics.html'
+    $vboxDoc   = 'https://www.virtualbox.org/manual/ch03.html#settings-display'
+
+    Write-Host ''
+    Write-Warn "3D (GPU) acceleration is NOT active - Zap is rendering in software (adapter: $($names -join ', '))."
+    Write-Host "    Zap renders on the GPU; in software expect input lag, scroll stutter, high"
+    Write-Host "    CPU, and occasional unpainted windows."
+    Write-Host ''
+
+    $vmKind = 'unknown'
+    try {
+        $cs  = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $sig = "$($cs.Manufacturer) $($cs.Model)"
+        if     ($sig -match 'VMware')                                   { $vmKind = 'vmware' }
+        elseif ($sig -match 'VirtualBox|Oracle')                        { $vmKind = 'virtualbox' }
+        elseif ($sig -match 'Microsoft Corporation' -and $sig -match 'Virtual') { $vmKind = 'othervm' }
+        elseif ($sig -match 'QEMU|KVM|Xen|Parallels|Bochs')             { $vmKind = 'othervm' }
+        else                                                            { $vmKind = 'physical' }
+    } catch { }
+
+    switch ($vmKind) {
+        'vmware' {
+            Write-Host "    This is a VMware VM. Enable 3D for the guest:"
+            Write-Host "      1. Power off the VM (do not just suspend it)."
+            Write-Host "      2. VM -> Settings -> Hardware -> Display -> check 'Accelerate 3D graphics'."
+            Write-Host "      3. Make sure VMware Tools is installed in the guest."
+            Write-Host "      Docs: $vmwareDoc"
+        }
+        'virtualbox' {
+            Write-Host "    This is a VirtualBox VM. Enable 3D for the guest:"
+            Write-Host "      1. Install the Guest Additions in the guest, then power off the VM."
+            Write-Host "      2. Settings -> Display -> Screen: Graphics Controller = VMSVGA,"
+            Write-Host "         tick 'Enable 3D Acceleration', and give it ~128MB video memory."
+            Write-Host "      Docs: $vboxDoc"
+        }
+        'physical' {
+            Write-Host "    No virtual machine detected - a real GPU should not fall back to the"
+            Write-Host "    Microsoft Basic Render Driver. Your GPU driver is likely missing or"
+            Write-Host "    broken; install the vendor driver (NVIDIA/AMD/Intel) and recheck."
+        }
+        default {
+            Write-Host "    If this is a VMware or VirtualBox VM, enable 3D in its display settings:"
+            Write-Host "      VMware:     $vmwareDoc"
+            Write-Host "      VirtualBox: $vboxDoc"
+            Write-Host "    Otherwise consult your hypervisor's GPU/3D options."
+        }
+    }
+
+    Write-Host ''
+    Write-Host "    Verify in the guest with 'dxdiag' (Display tab -> Direct3D Acceleration)."
+    Write-Host "    settings.toml already pins the DirectX 12 backend (correct once 3D is on)."
+    Write-Host "    If acceleration truly is not available, pin a backend before launching:"
+    Write-Host "      `$env:WGPU_BACKEND='gl'; zap"
+    Write-Host ''
+}
+
+#############################################################################
 # Phase 2 helpers - install Zap from GitHub
 #############################################################################
 
@@ -673,6 +767,7 @@ $principal = New-Object System.Security.Principal.WindowsPrincipal(
 if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Warn "Running elevated. A per-user install does not need admin; consider a normal user."
 }
+Test-GpuAcceleration
 
 #############################################################################
 # PHASE 2: Install Zap from latest GitHub ZapSetup.exe
