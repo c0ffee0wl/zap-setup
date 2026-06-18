@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-purpose installer that fetches the latest **Zap** terminal `.deb` from `github.com/zerx-lab/zap`, installs it via `apt`, and writes four opinionated configs (theme, keybindings, settings.toml, mcp.json) targeting Terminator parity — specifically the effective Terminator keymap produced by `/opt/linux-setup/linux-setup.sh`. No build system, no tests; just a Bash script + shared helpers in `linux/common.sh` + four payload files in `linux/configs/`.
 
-The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint; the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
+The installer assumes a LiteLLM proxy is already running on `127.0.0.1:4000` (LiteLLM setup is **out of scope**). The provider block in `settings.toml` points at that endpoint — but it is written **only when LiteLLM is detected** (the `litellm` CLI on `PATH`, or something answering on `127.0.0.1:4000`); with no LiteLLM the provider block is stripped and every LiteLLM-specific message is suppressed (see "Conditional LiteLLM provider" below). When present, the user pastes the API key once via Settings UI (it lives in the OS keyring, not in TOML).
 
 There is also a **Windows (PowerShell) port** under `windows/` — `setup.ps1` + `common.ps1` + `windows/configs/`. It mirrors the Linux phases but installs `ZapSetup.exe` (Inno Setup) silently, writes to Zap's Windows paths, and differs deliberately: built-in **Dracula** theme (no theme YAML), no font-family override, a `powershell.exe` session-shell override, a bash-style Ctrl+D PowerShell handler, and an optional **Azure** provider whose key it writes to Zap's DPAPI secrets file. See the "Windows port" section below.
 
@@ -57,6 +57,10 @@ The Zap GitHub project publishes releases with the asset name `zap_*_amd64.deb`.
 ### `__HOME__` template substitution
 
 `linux/configs/settings.toml` contains a literal `__HOME__` token in the theme `path = ...` field. The script renders it through `render_settings()` (a `sed "s|__HOME__|$HOME|g"` pipe) at install time. When adding new TOML keys that need an absolute path, reuse the same placeholder — do not invent a second one.
+
+### Conditional LiteLLM provider (detect-or-strip)
+
+The AI-provider block in `linux/configs/settings.toml` is wrapped in `# >>> zap-setup litellm provider >>>` / `# <<< zap-setup litellm provider <<<` sentinels and is **conditional on LiteLLM being present**. At the start of Phase 3, `setup.sh` sets `LITELLM_DETECTED=true` when either `command -v litellm` succeeds **or** an HTTP probe of `http://127.0.0.1:4000` responds — either signal is enough (the CLI may be installed but not started, or the proxy may be up from a venv/Docker/systemd whose CLI isn't on the login `PATH`). When LiteLLM is absent, `render_settings` `sed`-deletes the sentinel block (the bare `[agents.warp_agent]` table only owns `providers`; the sibling `[agents.warp_agent.*]` sub-tables that follow implicitly recreate the parent, so the stripped output is still valid TOML), the same flag short-circuits the Phase 4 keyring write, and the final "Next steps" output drops the LiteLLM key-paste and round-trip-verify lines. This is the **inverse** of the Windows sentinel usage in "Sentinel-delimited injected blocks" below: there the markers wrap a block *injected* into a file and regenerated on re-run; here they delimit an *optional* block in the static payload that is *stripped* at render time. Change is **Linux-only** — Windows already ships no provider unless the user opts into Azure.
 
 ### Custom-theme selector — name string identity matters
 

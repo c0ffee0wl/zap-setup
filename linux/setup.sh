@@ -298,6 +298,23 @@ install_zap_from_github
 log "Configuring Zap..."
 mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 
+# Detect LiteLLM so the AI-provider block (and every LiteLLM-specific message)
+# is only emitted when LiteLLM is actually present. Treat it as present if the
+# CLI is on PATH OR a proxy answers on its default port 4000 — either signal is
+# enough: the CLI may be installed but not yet started, or the proxy may be up
+# from a venv/Docker/systemd whose CLI isn't on the login PATH. The probe omits
+# -f so any HTTP response (even 401/404) counts as "reachable"; -q comes first
+# to ignore a hostile ~/.curlrc (same rationale as the .deb fetch above). curl
+# is guaranteed by Phase 1.
+LITELLM_DETECTED=false
+if command -v litellm &> /dev/null \
+   || curl -q -s -o /dev/null --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
+    LITELLM_DETECTED=true
+    log "LiteLLM detected — configuring the local AI provider"
+else
+    log "No local LiteLLM detected — skipping AI provider configuration"
+fi
+
 install_with_prompt() {
     local src=$1 dst=$2 label=$3 transform=${4:-cat}
 
@@ -314,7 +331,20 @@ install_with_prompt() {
 }
 
 # settings.toml uses __HOME__ as a placeholder for the absolute theme path.
-render_settings() { sed "s|__HOME__|$HOME|g"; }
+# When LiteLLM is absent, also drop the sentinel-delimited provider block so no
+# AI provider is configured (the [agents.warp_agent.*] sub-tables that follow
+# implicitly recreate the parent table, so this stays valid TOML).
+render_settings() {
+    if [ "$LITELLM_DETECTED" = true ]; then
+        sed "s|__HOME__|$HOME|g"
+    else
+        # One sed: drop the provider block, then substitute __HOME__. cat -s
+        # collapses the blank-line pair the range delete leaves at the seam back
+        # to a single separator (the payload has no other adjacent blanks).
+        sed -e '/# >>> zap-setup litellm provider >>>/,/# <<< zap-setup litellm provider <<</d' \
+            -e "s|__HOME__|$HOME|g" | cat -s
+    fi
+}
 
 install_with_prompt \
     "$SCRIPT_DIR/configs/terminator_black_on_white.yaml" \
@@ -356,7 +386,7 @@ fi
 # we read-merge-write to avoid clobbering keys for other providers the
 # user may have added via the UI.
 KEYRING_OK=false
-if [ -n "${LITELLM_API_KEY:-}" ]; then
+if [ "$LITELLM_DETECTED" = true ] && [ -n "${LITELLM_API_KEY:-}" ]; then
     if ! command -v secret-tool &> /dev/null; then
         warn "LITELLM_API_KEY set but secret-tool missing — install libsecret-tools to enable keyring write"
     else
@@ -471,13 +501,31 @@ fi
 
 echo
 log "Zap setup complete."
-if [ "$KEYRING_OK" = true ]; then
-    KEY_STEP="The LiteLLM API key is already in the OS keyring — no UI paste needed."
-else
-    KEY_STEP='Open Settings -> AI -> Agent Providers -> "LiteLLM (local)" -> API Key
+
+# Build the numbered "Next steps" list. The provider key-paste step (#2) and the
+# AI round-trip verification step are LiteLLM-specific: they change shape (or
+# vanish) when no provider was configured. Step numbers are assigned here so the
+# list stays contiguous whether or not the verification step is present.
+if [ "$LITELLM_DETECTED" = true ]; then
+    if [ "$KEYRING_OK" = true ]; then
+        KEY_STEP="The LiteLLM API key is already in the OS keyring — no UI paste needed."
+    else
+        KEY_STEP='Open Settings -> AI -> Agent Providers -> "LiteLLM (local)" -> API Key
      and paste your LiteLLM master key. (The api_key lives in the OS
      keyring, not in settings.toml. To skip this step on next install,
      export LITELLM_API_KEY before re-running the script.)'
+    fi
+    VERIFY_STEP='  4. In a block, type any prompt and check Ctrl-O (block log) shows
+     POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
+     proxy listening on the default port 4000 — out of scope for this
+     installer).
+'
+    MCP_NUM=5
+else
+    KEY_STEP='No AI provider was configured (no local LiteLLM found). Add one via
+     Settings -> AI -> Agent Providers, or install/start LiteLLM and re-run.'
+    VERIFY_STEP=''
+    MCP_NUM=4
 fi
 cat << EOF
 
@@ -486,11 +534,7 @@ Next steps:
   2. $KEY_STEP
   3. Verify Settings -> Appearance shows "Terminator Black on White" + Fira
      Code 13.
-  4. In a block, type any prompt and check Ctrl-O (block log) shows
-     POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
-     proxy listening on the default port 4000 — out of scope for this
-     installer).
-  5. The microsoft-learn and deepwiki MCP servers are registered in
+${VERIFY_STEP}  ${MCP_NUM}. The microsoft-learn and deepwiki MCP servers are registered in
      $ZAP_HOME_DIR/.mcp.json. In the agent panel, confirm both appear in
      the available MCP tools list (if they're missing, check that
      \$WARP_DATA_PROFILE is unset — it changes the dir Zap reads).

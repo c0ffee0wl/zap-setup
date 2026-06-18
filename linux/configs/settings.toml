@@ -123,6 +123,7 @@ focus_pane_on_hover = true
 [appearance.blocks]
 show_block_dividers = false
 
+# >>> zap-setup litellm provider >>>
 # LiteLLM provider — proxy assumed to be listening on its default port 4000
 # at localhost (LiteLLM setup is out of scope for this installer).
 #
@@ -162,6 +163,7 @@ providers = [
     name = "LiteLLM (local)",
   },
 ]
+# <<< zap-setup litellm provider <<<
 
 # Disable proactive Active AI (the always-on assistant) — too intrusive
 # for a Terminator-style terminal. Voice input also off.
