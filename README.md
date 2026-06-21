@@ -1,6 +1,6 @@
 # zap-setup
 
-Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetches the latest `.deb` from upstream, installs it via `apt`, and writes four opinionated configs: a Terminator "Black on White" theme, Terminator-parity keybindings, a `settings.toml` wired to a local [LiteLLM](https://docs.litellm.ai/) proxy, and an `mcp.json` with auth-free documentation MCP servers (Microsoft Learn, DeepWiki). If the `claude` CLI is installed, it also registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`), failing quietly when a managed policy forbids foreign marketplaces.
+Linux installer for the [Zap](https://github.com/zerx-lab/zap) terminal. It fetches the latest `.deb` from upstream, installs it via `apt`, and writes four opinionated configs: a Terminator "Black on White" theme, Terminator-parity keybindings, a `settings.toml` wired to the public [OpenAI](https://platform.openai.com/) API by default (or a local [LiteLLM](https://docs.litellm.ai/) proxy when one is detected), and an `mcp.json` with auth-free documentation MCP servers (Microsoft Learn, DeepWiki). If the `claude` CLI is installed, it also registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`), failing quietly when a managed policy forbids foreign marketplaces.
 
 Runs on Debian and Kali (Bash) as a regular user. amd64 only; Zap publishes no arm64 `.deb`.
 
@@ -11,16 +11,16 @@ There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#w
 ```bash
 git clone https://github.com/c0ffee0wl/zap-setup ~/zap-setup
 cd ~/zap-setup
-export LITELLM_API_KEY=sk-...        # optional: pre-stash in OS keyring
+export OPENAI_API_KEY=sk-...         # optional: pre-stash the OpenAI key in the OS keyring
 ./linux/setup.sh
 zap                                  # launch
 ```
 
 Open Zap and you have a working terminal straight away. The AI wiring is optional; Zap is a perfectly good terminal without any of it.
 
-Where it gets good is the built-in LLM integration, and that's really the reason to bother. Setup pre-configures an agent provider named "LiteLLM (local)" aimed at `http://127.0.0.1:4000/v1/`, so if you have a LiteLLM proxy listening on that port, the agent works the moment you add a key. Paste it once via Settings → AI → Agent Providers → LiteLLM (local) → API Key, or export `LITELLM_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
+Where it gets good is the built-in LLM integration, and that's really the reason to bother. By default setup pre-configures an agent provider named "OpenAI" aimed at `https://api.openai.com/v1/` with the `gpt-5.4` model, so the agent works the moment you add a key. Need one? Create it at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it once via Settings → AI → Agent Providers → OpenAI → API Key, or export `OPENAI_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
 
-No proxy running? Nothing breaks. The provider just sits idle and the rest of Zap behaves exactly the same until you point it at a live endpoint. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup this is built for.
+Running a local LiteLLM proxy instead? Setup detects it (the `litellm` CLI on `PATH`, or anything answering on `127.0.0.1:4000`) and wires an agent provider named "LiteLLM (local)" aimed at `http://127.0.0.1:4000/v1/` in place of OpenAI. The key works the same way: paste it via Settings → AI → Agent Providers → LiteLLM (local) → API Key, or export `LITELLM_API_KEY` before running. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup the LiteLLM path is built for.
 
 ## Setup Modes
 
@@ -34,7 +34,8 @@ No proxy running? Nothing breaks. The provider just sits idle and the rest of Za
 ## Architecture
 
 ```
-Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► Azure / Vertex / etc.  (AI agent; optional)
+Zap (GUI terminal) ──► https://api.openai.com/v1/                            (AI agent; default)
+    │              └─ or ──► http://127.0.0.1:4000 ──► LiteLLM ──► Azure / Vertex / etc.  (when a proxy is detected)
     │
     ├── ~/.config/zap/settings.toml         (font, theme selector, provider block)
     ├── ~/.config/zap/keybindings.yaml      (Terminator-parity bindings)
@@ -55,7 +56,7 @@ Zap (GUI terminal) ──► http://127.0.0.1:4000 ──► LiteLLM ──► A
 
 - `linux/setup.sh`: phases 0-6 (self-update, apt prereqs, .deb fetch, config render + install incl. mcp.json, optional keyring write, XFCE Super+Q reclaim, optional Claude Code plugin marketplace when `claude` is present)
 - `linux/common.sh`: shared helpers (colors, logging, `backup_file`, `prompt_yes_no`); blocks lifted verbatim from `/opt/linux-setup/linux-setup.sh` and annotated with their upstream line ranges
-- `linux/configs/settings.toml`: font, theme selector, LiteLLM provider entry; uses the `__HOME__` placeholder
+- `linux/configs/settings.toml`: font, theme selector, and two mutually-exclusive provider blocks (OpenAI default + LiteLLM override); `render_settings` strips one based on LiteLLM detection. Uses the `__HOME__` placeholder
 - `linux/configs/keybindings.yaml`: Terminator-parity keybindings
 - `linux/configs/terminator_black_on_white.yaml`: theme payload (must keep `name: Terminator Black on White`)
 - `linux/configs/mcp.json`: MCP server registrations (microsoft-learn, deepwiki); installed to `~/.zap/.mcp.json`

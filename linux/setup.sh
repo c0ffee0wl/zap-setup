@@ -4,6 +4,8 @@
 # Installs Zap from the latest GitHub .deb and configures it with
 # the Terminator "Black on White" theme + Terminator-style keybindings
 # (mirroring /opt/linux-setup/linux-setup.sh's effective Terminator set).
+# The AI agent is wired to the public OpenAI provider by default, or to a
+# local LiteLLM proxy when one is detected on 127.0.0.1:4000.
 #
 # Shared helpers (colors / log / backup_file / prompt_yes_no) live in
 # linux/common.sh — they're lifted verbatim from /opt/linux-setup/linux-setup.sh
@@ -23,9 +25,9 @@ NO_MODE=false
 show_usage() {
     cat << EOF
 Zap Setup Script v${VERSION}
-Installs Zap from the latest GitHub .deb and configures it to use a local
-LiteLLM proxy + Terminator-style keybindings on a Terminator "Black on White"
-theme.
+Installs Zap from the latest GitHub .deb and configures it to use the public
+OpenAI provider by default (or a local LiteLLM proxy when one is detected) plus
+Terminator-style keybindings on a Terminator "Black on White" theme.
 
 Usage: $0 [OPTIONS]
 
@@ -36,6 +38,9 @@ Options:
 
 Interactive mode (default) prompts before overwriting any existing config in
 ~/.config/zap/, ~/.local/share/zap/themes/, or ~/.zap/. Backups are timestamped.
+
+Export OPENAI_API_KEY (or LITELLM_API_KEY for the local-proxy path) before
+running to stash the provider key in the OS keyring automatically.
 
 EOF
     exit 0
@@ -98,7 +103,8 @@ ZAP_HOME_DIR="$HOME/.zap${WARP_DATA_PROFILE+-$WARP_DATA_PROFILE}"
 # and Zap's read on startup.
 ZAP_KEYRING_SERVICE="dev.zap.Zap"
 ZAP_KEYRING_KEY="AgentProviderSecrets"
-LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in linux/configs/settings.toml
+LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in the litellm block of settings.toml
+OPENAI_PROVIDER_ID="openai"           # must match providers.id in the openai block of settings.toml
 
 #############################################################################
 # PHASE 0: Self-Update (adapted from linux-setup.sh:483-512 — see inline note)
@@ -298,21 +304,22 @@ install_zap_from_github
 log "Configuring Zap..."
 mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 
-# Detect LiteLLM so the AI-provider block (and every LiteLLM-specific message)
-# is only emitted when LiteLLM is actually present. Treat it as present if the
-# CLI is on PATH OR a proxy answers on its default port 4000 — either signal is
-# enough: the CLI may be installed but not yet started, or the proxy may be up
-# from a venv/Docker/systemd whose CLI isn't on the login PATH. The probe omits
-# -f so any HTTP response (even 401/404) counts as "reachable"; -q comes first
-# to ignore a hostile ~/.curlrc (same rationale as the .deb fetch above). curl
-# is guaranteed by Phase 1.
+# Detect LiteLLM to choose which provider render_settings keeps. The default is
+# the public OpenAI provider; a detected LiteLLM proxy overrides it (a local
+# proxy means the user is deliberately routing through their own gateway).
+# Treat LiteLLM as present if the CLI is on PATH OR a proxy answers on its
+# default port 4000 — either signal is enough: the CLI may be installed but not
+# yet started, or the proxy may be up from a venv/Docker/systemd whose CLI isn't
+# on the login PATH. The probe omits -f so any HTTP response (even 401/404)
+# counts as "reachable"; -q comes first to ignore a hostile ~/.curlrc (same
+# rationale as the .deb fetch above). curl is guaranteed by Phase 1.
 LITELLM_DETECTED=false
 if command -v litellm &> /dev/null \
    || curl -q -s -o /dev/null --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
     LITELLM_DETECTED=true
-    log "LiteLLM detected — configuring the local AI provider"
+    log "LiteLLM detected — using the local LiteLLM provider (instead of the default OpenAI)"
 else
-    log "No local LiteLLM detected — skipping AI provider configuration"
+    log "No local LiteLLM detected — configuring the public OpenAI provider (default)"
 fi
 
 install_with_prompt() {
@@ -330,20 +337,22 @@ install_with_prompt() {
     log "Installed $label: $dst"
 }
 
-# settings.toml uses __HOME__ as a placeholder for the absolute theme path.
-# When LiteLLM is absent, also drop the sentinel-delimited provider block so no
-# AI provider is configured (the [agents.warp_agent.*] sub-tables that follow
-# implicitly recreate the parent table, so this stays valid TOML).
+# settings.toml carries TWO mutually-exclusive provider blocks (litellm + openai)
+# plus a __HOME__ placeholder for the absolute theme path. Exactly one provider
+# survives: the litellm block when a LiteLLM proxy was detected, otherwise the
+# public OpenAI block (the default). We strip the INACTIVE block and substitute
+# __HOME__ in a single sed; cat -s collapses the blank-line pair the range delete
+# leaves at the seam back to a single separator (the payload has no other
+# adjacent blanks). The surviving block's [agents.warp_agent] is the explicit
+# parent for the [agents.warp_agent.*] sub-tables that follow, so the output is
+# valid TOML.
 render_settings() {
-    if [ "$LITELLM_DETECTED" = true ]; then
-        sed "s|__HOME__|$HOME|g"
-    else
-        # One sed: drop the provider block, then substitute __HOME__. cat -s
-        # collapses the blank-line pair the range delete leaves at the seam back
-        # to a single separator (the payload has no other adjacent blanks).
-        sed -e '/# >>> zap-setup litellm provider >>>/,/# <<< zap-setup litellm provider <<</d' \
-            -e "s|__HOME__|$HOME|g" | cat -s
-    fi
+    # LiteLLM detected -> keep litellm (strip openai); otherwise keep the default
+    # openai (strip litellm).
+    local strip
+    if [ "$LITELLM_DETECTED" = true ]; then strip="openai"; else strip="litellm"; fi
+    sed -e "/# >>> zap-setup $strip provider >>>/,/# <<< zap-setup $strip provider <<</d" \
+        -e "s|__HOME__|$HOME|g" | cat -s
 }
 
 install_with_prompt \
@@ -378,17 +387,29 @@ if [ ! -e "$HOME/.hushlogin" ]; then
 fi
 
 #############################################################################
-# PHASE 4: Stash LiteLLM API key in the OS keyring (only if env var is set)
+# PHASE 4: Stash the active provider's API key in the OS keyring (if env var set)
 #############################################################################
 # Zap keeps provider API keys in the Secret Service (libsecret on
 # Linux), not in settings.toml — see app/src/ai/agent_providers/secrets.rs.
 # The stored value is a single JSON map of every custom provider's key, so
 # we read-merge-write to avoid clobbering keys for other providers the
 # user may have added via the UI.
+#
+# Which key we stash follows the provider render_settings just chose: the
+# LiteLLM proxy key when LiteLLM was detected, otherwise the public OpenAI key.
+# Both are optional — with no env var set the user pastes the key once via the
+# Settings UI instead.
 KEYRING_OK=false
-if [ "$LITELLM_DETECTED" = true ] && [ -n "${LITELLM_API_KEY:-}" ]; then
+if [ "$LITELLM_DETECTED" = true ]; then
+    KEY_PROVIDER_ID="$LITELLM_PROVIDER_ID"; KEY_PROVIDER_LABEL="LiteLLM"
+    KEY_ENV_NAME="LITELLM_API_KEY";          API_KEY="${LITELLM_API_KEY:-}"
+else
+    KEY_PROVIDER_ID="$OPENAI_PROVIDER_ID";   KEY_PROVIDER_LABEL="OpenAI"
+    KEY_ENV_NAME="OPENAI_API_KEY";           API_KEY="${OPENAI_API_KEY:-}"
+fi
+if [ -n "$API_KEY" ]; then
     if ! command -v secret-tool &> /dev/null; then
-        warn "LITELLM_API_KEY set but secret-tool missing — install libsecret-tools to enable keyring write"
+        warn "$KEY_ENV_NAME set but secret-tool missing — install libsecret-tools to enable keyring write"
     else
         existing=$(secret-tool lookup service "$ZAP_KEYRING_SERVICE" key "$ZAP_KEYRING_KEY" 2>/dev/null || true)
         [ -n "$existing" ] || existing='{}'
@@ -397,14 +418,14 @@ if [ "$LITELLM_DETECTED" = true ] && [ -n "${LITELLM_API_KEY:-}" ]; then
         # `inherit_errexit`), so $merged ends up empty. Guarding below
         # prevents an empty store call from wiping every other provider's
         # key under the same service.
-        merged=$(printf '%s' "$existing" | jq --arg id "$LITELLM_PROVIDER_ID" --arg k "$LITELLM_API_KEY" '. + {($id): $k}')
+        merged=$(printf '%s' "$existing" | jq --arg id "$KEY_PROVIDER_ID" --arg k "$API_KEY" '. + {($id): $k}')
         if [ -z "$merged" ]; then
             warn "Refusing to write keyring: jq merge produced empty value (existing keyring entry is likely not valid JSON). Other providers' keys preserved."
         elif printf '%s' "$merged" | secret-tool store \
                 --label="Zap: $ZAP_KEYRING_KEY" \
                 service "$ZAP_KEYRING_SERVICE" \
                 key "$ZAP_KEYRING_KEY"; then
-            log "Stored LiteLLM API key in OS keyring (provider id: $LITELLM_PROVIDER_ID)"
+            log "Stored $KEY_PROVIDER_LABEL API key in OS keyring (provider id: $KEY_PROVIDER_ID)"
             KEYRING_OK=true
         else
             warn "Failed to write to OS keyring (see secret-tool stderr above — likely a locked collection or missing secret-service daemon)"
@@ -502,10 +523,10 @@ fi
 echo
 log "Zap setup complete."
 
-# Build the numbered "Next steps" list. The provider key-paste step (#2) and the
-# AI round-trip verification step are LiteLLM-specific: they change shape (or
-# vanish) when no provider was configured. Step numbers are assigned here so the
-# list stays contiguous whether or not the verification step is present.
+# Build the numbered "Next steps" list. There is always a provider now (OpenAI by
+# default, LiteLLM when detected), so the key-paste step (#2) and the AI
+# round-trip verification step are always present — only their text changes to
+# match the active provider. MCP is therefore always step 5.
 if [ "$LITELLM_DETECTED" = true ]; then
     if [ "$KEYRING_OK" = true ]; then
         KEY_STEP="The LiteLLM API key is already in the OS keyring — no UI paste needed."
@@ -520,13 +541,21 @@ if [ "$LITELLM_DETECTED" = true ]; then
      proxy listening on the default port 4000 — out of scope for this
      installer).
 '
-    MCP_NUM=5
 else
-    KEY_STEP='No AI provider was configured (no local LiteLLM found). Add one via
-     Settings -> AI -> Agent Providers, or install/start LiteLLM and re-run.'
-    VERIFY_STEP=''
-    MCP_NUM=4
+    if [ "$KEYRING_OK" = true ]; then
+        KEY_STEP="The OpenAI API key is already in the OS keyring — no UI paste needed."
+    else
+        KEY_STEP='Open Settings -> AI -> Agent Providers -> "OpenAI" -> API Key and
+     paste your OpenAI API key. (The api_key lives in the OS keyring, not
+     in settings.toml. To skip this step on next install, export
+     OPENAI_API_KEY before re-running the script.)'
+    fi
+    VERIFY_STEP='  4. In a block, type any prompt and check Ctrl-O (block log) shows
+     POST api.openai.com/v1/chat/completions -> 200 (needs a valid OpenAI
+     API key with access to the gpt-5.4 model).
+'
 fi
+MCP_NUM=5
 cat << EOF
 
 Next steps:

@@ -152,10 +152,10 @@ providers = [
       {
         audio = false,
         context_window = 400000,
-        id = "azure/gpt-5.4-mini",
+        id = "azure/gpt-5.4",
         image = true,
         max_output_tokens = 128000,
-        name = "Azure GPT 5.4 mini",
+        name = "Azure GPT 5.4",
         pdf = true,
         reasoning = true,
       },
@@ -164,6 +164,43 @@ providers = [
   },
 ]
 # <<< zap-setup litellm provider <<<
+
+# >>> zap-setup openai provider >>>
+# Public OpenAI provider — the DEFAULT. render_settings keeps EITHER this block
+# OR the litellm block above (never both): the litellm one wins when a LiteLLM
+# proxy is detected on 127.0.0.1:4000, otherwise this OpenAI block is rendered.
+# The raw payload therefore carries two [agents.warp_agent] tables on purpose —
+# it is not valid TOML until render_settings strips one; only the rendered
+# output is ever parsed.
+#
+# Same provider/model shape as the litellm block, pointed at api.openai.com
+# (api_type "open_ai" = Chat Completions; base_url MUST end in /). Unlike the
+# local proxy, this will not work without a real key: paste it once via
+# Settings → AI → Agent Providers → OpenAI → API Key, or export OPENAI_API_KEY
+# before running setup and the script stashes it in the OS keyring for you.
+[agents.warp_agent]
+providers = [
+  {
+    api_type = "open_ai",
+    base_url = "https://api.openai.com/v1/",
+    id = "openai",
+    kind = "open_ai_compatible",
+    models = [
+      {
+        audio = false,
+        context_window = 400000,
+        id = "gpt-5.4",
+        image = true,
+        max_output_tokens = 128000,
+        name = "GPT-5.4",
+        pdf = true,
+        reasoning = true,
+      },
+    ],
+    name = "OpenAI",
+  },
+]
+# <<< zap-setup openai provider <<<
 
 # Disable proactive Active AI (the always-on assistant) — too intrusive
 # for a Terminator-style terminal. Voice input also off.
