@@ -18,7 +18,6 @@ There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#w
 - [Windows](#windows)
   - [Setup modes](#setup-modes)
   - [Layout](#layout)
-  - [3D acceleration in a VM](#3d-acceleration-in-a-vm)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -103,7 +102,7 @@ When 3D acceleration genuinely isn't available, Zap still starts. Pin a backend 
 
 ## Windows
 
-A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It additionally pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
+A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It also pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
 
 Requires Windows 10 build 18362+ (ConPTY). x64.
 
@@ -144,15 +143,3 @@ Windows-specific notes:
 - **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
 
 Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.
-
-### 3D acceleration in a VM
-
-The same applies on Windows. Zap is GPU-rendered, so a Windows guest with no 3D acceleration falls back to the Microsoft Basic Render Driver, and you get the same lag and CPU drain. On VMware Workstation Pro with a Windows host and a Windows guest:
-
-1. Power off the VM.
-2. Open VM → Settings → Hardware → Display, tick **Accelerate 3D graphics**, and set **Graphics memory** to 1 GB or more.
-3. Boot the guest and install the full VMware Tools package. It ships the SVGA 3D WDDM driver that Zap renders through. Reboot afterwards.
-
-The Windows host needs a current GPU driver and DirectX, which `dxdiag` will confirm. To check the guest picked it up, run `dxdiag` there too: the Display tab should name the VMware SVGA 3D adapter with Direct3D acceleration enabled rather than the Basic Render Driver.
-
-The installer already sets the backend to DirectX 12 (`system.preferred_graphics_backend = "dx_12"`, a Windows-only key), which is the right choice once real acceleration is in place. If DX12 still struggles in your VM, switch it from Settings → Features → Preferred graphics backend, or set `WGPU_BACKEND` (for example `gl`) before launching.
