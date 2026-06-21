@@ -6,6 +6,22 @@ Runs on Debian and Kali (Bash) as a regular user. amd64 only; Zap publishes no a
 
 There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#windows) below.
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
+- [Quick Start](#quick-start)
+- [Setup Modes](#setup-modes)
+- [Architecture](#architecture)
+- [Important Files](#important-files)
+- [Idempotency](#idempotency)
+- [Performance in a VM: enable 3D acceleration](#performance-in-a-vm-enable-3d-acceleration)
+- [Windows](#windows)
+  - [Setup modes](#setup-modes)
+  - [Layout](#layout)
+  - [3D acceleration in a VM](#3d-acceleration-in-a-vm)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 ## Quick Start
 
 ```bash
