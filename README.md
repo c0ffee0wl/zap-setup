@@ -11,6 +11,7 @@ There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#w
 
 - [Quick Start](#quick-start)
 - [Setup Modes](#setup-modes)
+- [Updating Zap](#updating-zap)
 - [Architecture](#architecture)
 - [Important Files](#important-files)
 - [Idempotency](#idempotency)
@@ -46,6 +47,18 @@ Running a local LiteLLM proxy instead? Setup detects it (the `litellm` CLI on `P
 | `./linux/setup.sh --no` | Non-interactive, answer **No**. Preserves every existing config (alias: `-n`) |
 | `./linux/setup.sh --help` | Show usage and exit (alias: `-h`) |
 
+## Updating Zap
+
+Setup installs an **`update-zap`** command to `/usr/local/bin/update-zap`, so you can bump Zap later without re-running the whole installer:
+
+```bash
+update-zap          # checks GitHub; installs the latest .deb only if it's newer
+```
+
+It walks the same release filter the installer uses and short-circuits when Zap is already current (printing `zap <version> already installed (latest Zap release)`), so it's safe to run anytime. The `apt` install step needs sudo (you'll be prompted). It updates only the Zap binary — your configs, keybindings, and provider are left untouched. You can also run it straight from the repo as `./linux/update-zap.sh`.
+
+The Windows installer ships the same command; see [Windows](#windows).
+
 ## Architecture
 
 ```
@@ -64,7 +77,7 @@ Zap (GUI terminal) ──► https://api.openai.com/v1/                         
 - `settings.toml` ships with a literal `__HOME__` token in the theme path; `render_settings()` substitutes `$HOME` at install time. Reuse this placeholder for any new absolute-path keys.
 - MCP servers live in `~/.zap/.mcp.json` (not `~/.config/zap/`), loaded by Zap's `file_mcp_watcher` at startup and on file change. Only auth-free URL endpoints are bundled; Zap has no keyring slot for MCP headers, so tokenized servers (GitHub, Linear, etc.) stay user-added.
 - The API key lives in the OS keyring, never in `settings.toml`. The keyring path is coupled to Zap internals (`app/src/ai/agent_providers/secrets.rs`). The Phase 4 keyring write read-merge-writes so it does not clobber keys for other providers added via the UI.
-- No APT repo, no auto-updates. The `.deb` postinst skips repo and trust-key configuration on purpose. Updates only happen via re-running this installer; the in-app update toast is disabled (`[updates] automatic_updates_enabled = false`).
+- No APT repo, no auto-updates. The `.deb` postinst skips repo and trust-key configuration on purpose. The in-app update toast is disabled (`[updates] automatic_updates_enabled = false`). Setup installs an `update-zap` command (see [Updating Zap](#updating-zap)) for the lightweight update path; re-running the full installer also picks up a newer `.deb`.
 - The release filter is pinned. The installer walks `releases?per_page=30` newest-first and picks the first record whose asset name matches `^zap_.*_amd64\.deb$`. Older `warp-terminal-oss_*_amd64.deb` assets and any future parallel release line are ignored.
 
 ## Important Files
@@ -75,12 +88,13 @@ Zap (GUI terminal) ──► https://api.openai.com/v1/                         
 - `linux/configs/keybindings.yaml`: Terminator-parity keybindings
 - `linux/configs/terminator_black_on_white.yaml`: theme payload (must keep `name: Terminator Black on White`)
 - `linux/configs/mcp.json`: MCP server registrations (microsoft-learn, deepwiki); installed to `~/.zap/.mcp.json`
+- `linux/update-zap.sh`: self-contained `update-zap` command, installed to `/usr/local/bin/update-zap`; duplicates the install + version-check from `setup.sh` (asset filter kept in sync) so it works without the repo present
 
 ## Idempotency
 
 `setup.sh` is safe to re-run. A second invocation with no upstream changes is a no-op: the `.deb` install short-circuits on version match (`dpkg-query` compares the installed version against the tag from the GitHub release record), and every overwrite prompt defaults to **N**. Existing configs are never replaced without a timestamped backup; in interactive mode the prompt defaults to N, so a no-flag re-run preserves everything. Under `--force` the previous file is still copied to `<path>.backup.YYYY-MM-DD_HH-MM-SS` before the overwrite.
 
-Zap updates are managed by re-running this installer. There is no `apt upgrade` path because the `.deb` postinst does not register an APT repo.
+Zap updates are managed by the `update-zap` command (or by re-running this installer); both short-circuit on a version match. There is no `apt upgrade` path because the `.deb` postinst does not register an APT repo.
 
 ## Performance in a VM: enable 3D acceleration
 
@@ -133,6 +147,7 @@ For a non-interactive Azure setup, set `ZAP_AZURE_ENDPOINT` and `ZAP_AZURE_API_K
 %USERPROFILE%\.zap\.mcp.json                      (MCP servers: microsoft-learn, deepwiki)
 %LOCALAPPDATA%\zap\Zap\data\dev.zap.Zap-AgentProviderSecrets   (DPAPI-encrypted {provider-id: key})
 Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1   (Ctrl+D handler; also Documents\PowerShell\ for pwsh)
+%LOCALAPPDATA%\zap-setup\bin\update-zap.cmd + update-zap.ps1   (the update-zap command; this dir is added to your User PATH)
 ```
 
 Windows-specific notes:
@@ -141,5 +156,6 @@ Windows-specific notes:
 - **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer` and appends `chat/completions` to `base_url`, so only the `…/openai/v1/` form works; the classic `…/openai/deployments/{name}/chat/completions?api-version=…` route (which expects the `api-key` header) would return 401.
 - **Ctrl+D.** Zap forwards Ctrl+D to the PTY as EOF; bash exits on an empty line, PowerShell does not. The installed handler replicates bash: Ctrl+D on an empty prompt runs `exit` (closing the pane), otherwise deletes the char under the cursor. It is written into both the Windows PowerShell 5.1 profile and (if `pwsh` is installed) the PowerShell 7+ profile.
 - **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
+- **Updating.** Setup installs an `update-zap` command (a `.cmd` shim + `update-zap.ps1`) to `%LOCALAPPDATA%\zap-setup\bin` and adds that dir to your User PATH, so you can run `update-zap` from any new terminal to install the latest release only when it's newer - the same behavior as the Linux command. Open a fresh terminal after the first install so the PATH entry takes effect.
 
 Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.

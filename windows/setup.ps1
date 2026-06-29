@@ -371,6 +371,58 @@ function Install-Zap {
     }
 }
 
+function Install-UpdateCommand {
+    # Install the standalone update-zap command (update-zap.cmd shim + the
+    # self-contained update-zap.ps1) into a per-user bin dir and put that dir on
+    # the User PATH, so the user can bump Zap later without re-running this whole
+    # installer. The .cmd shim makes a bare `update-zap` work in cmd and
+    # PowerShell. The .ps1 duplicates the install/version-check logic on purpose
+    # (it must run without the cloned repo) - see windows/update-zap.ps1.
+    $cmdSrc = Join-Path $PSScriptRoot 'update-zap.cmd'
+    $ps1Src = Join-Path $PSScriptRoot 'update-zap.ps1'
+    if (-not (Test-Path -LiteralPath $cmdSrc) -or -not (Test-Path -LiteralPath $ps1Src)) {
+        Write-Warn "update-zap payload not found next to setup.ps1; skipping the update-zap command install."
+        return
+    }
+
+    $binDir = Join-Path $env:LOCALAPPDATA 'zap-setup\bin'
+    $cmdDst = Join-Path $binDir 'update-zap.cmd'
+    $ps1Dst = Join-Path $binDir 'update-zap.ps1'
+
+    $doCopy = $true
+    if ((Test-Path -LiteralPath $cmdDst) -or (Test-Path -LiteralPath $ps1Dst)) {
+        # Default Y: this is our managed command, so a re-run refreshes it. -No
+        # preserves an existing copy; -Force refreshes it.
+        $doCopy = Confirm-YesNo "Refresh the update-zap command in $binDir?" 'Y'
+    }
+    if ($doCopy) {
+        New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+        Copy-Item -LiteralPath $cmdSrc -Destination $cmdDst -Force
+        Copy-Item -LiteralPath $ps1Src -Destination $ps1Dst -Force
+        Write-Log "Installed update-zap command: $cmdDst (run: update-zap)"
+    } else {
+        Write-Log "Keeping existing update-zap command in $binDir"
+    }
+
+    # Idempotently add the bin dir to the User PATH (no admin needed). Compare
+    # case-insensitively and ignore a trailing backslash on existing entries so
+    # we never duplicate. ($binDir is from Join-Path, so it has no trailing \.)
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $userPath) { $userPath = '' }
+    $present = $userPath.Split(';') | Where-Object { $_ -and ($_.TrimEnd('\') -ieq $binDir) }
+    if (-not $present) {
+        $base = $userPath.TrimEnd(';')
+        $newPath = if ($base) { "$base;$binDir" } else { $binDir }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        Write-Log "Added $binDir to your user PATH (open a new terminal for it to take effect)."
+    } else {
+        Write-Log "$binDir already on your user PATH."
+    }
+    # Make `update-zap` usable in the current session too (the persistent User
+    # PATH write above does not reach the live process).
+    if (($env:PATH -split ';') -notcontains $binDir) { $env:PATH += ";$binDir" }
+}
+
 #############################################################################
 # Phase 4 helper - bash-style Ctrl+D handler in the PowerShell profiles
 #############################################################################
@@ -770,10 +822,11 @@ if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administ
 Test-GpuAcceleration
 
 #############################################################################
-# PHASE 2: Install Zap from latest GitHub ZapSetup.exe
+# PHASE 2: Install Zap from latest GitHub ZapSetup.exe + the update-zap command
 #############################################################################
 
 Install-Zap
+Install-UpdateCommand
 
 #############################################################################
 # PHASE 3: Configure Zap (settings, keybindings, MCP)

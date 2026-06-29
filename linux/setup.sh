@@ -245,7 +245,7 @@ check_gpu_acceleration() {
 check_gpu_acceleration
 
 #############################################################################
-# PHASE 2: Install Zap from latest GitHub .deb
+# PHASE 2: Install Zap from latest GitHub .deb + the update-zap command
 #############################################################################
 
 install_zap_from_github() {
@@ -296,6 +296,25 @@ install_zap_from_github() {
 }
 
 install_zap_from_github
+
+# Install the standalone `update-zap` command to /usr/local/bin so the user can
+# bump Zap later without re-running this whole installer. The command is
+# self-contained (it does not source common.sh) — see linux/update-zap.sh, which
+# duplicates the release-walk/version-check on purpose. /usr/local/bin is on the
+# default PATH, so `update-zap` works in new shells immediately.
+install_update_command() {
+    local src="$SCRIPT_DIR/update-zap.sh" dst="/usr/local/bin/update-zap"
+    if [ -f "$dst" ]; then
+        # Default Y: this is our managed command, so a re-run refreshes it. --no
+        # preserves an existing copy; --force refreshes it.
+        prompt_yes_no "Refresh the update-zap command at $dst?" "Y" \
+            || { log "Keeping existing $dst"; return 0; }
+    fi
+    sudo install -m 0755 "$src" "$dst"
+    log "Installed update-zap command: $dst (run: update-zap)"
+}
+
+install_update_command
 
 #############################################################################
 # PHASE 3: Configure Zap (theme, keybindings, settings.toml)

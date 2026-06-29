@@ -18,7 +18,10 @@ There is also a **Windows (PowerShell) port** under `windows/` — `setup.ps1` +
 ./linux/setup.sh --no                  # auto-No — preserves every existing config
 ./linux/setup.sh --help
 
-bash -n linux/setup.sh && bash -n linux/common.sh   # syntax check (do this before any edit to either .sh)
+update-zap                             # installed by setup.sh; updates Zap only if a newer release exists
+./linux/update-zap.sh --help           # same command, run straight from the repo
+
+bash -n linux/setup.sh && bash -n linux/common.sh && bash -n linux/update-zap.sh   # syntax check (do this before any edit to any .sh)
 ```
 
 Windows port (run on Windows; on Linux use `pwsh` only to lint):
@@ -29,7 +32,10 @@ Windows port (run on Windows; on Linux use `pwsh` only to lint):
 .\windows\setup.ps1 -No                # auto-No  (alias -n)
 .\windows\setup.ps1 -Help
 
-# parse-check (no execution) — do this before any edit to either .ps1:
+update-zap                             # installed by setup.ps1 (on the User PATH); updates Zap only if newer
+.\windows\update-zap.ps1 -Help         # same command, run straight from the repo
+
+# parse-check (no execution) — do this before any edit to any .ps1 (repeat for windows/update-zap.ps1):
 pwsh -NoProfile -Command '$e=$null;[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path windows/setup.ps1),[ref]$null,[ref]$e);$e'
 ```
 
@@ -53,6 +59,15 @@ Several blocks are **copied character-for-character** from the linux-setup scrip
 ### Release-asset filter (do not loosen)
 
 The Zap GitHub project publishes releases with the asset name `zap_*_amd64.deb`. Older `warp-terminal-oss_*_amd64.deb` assets pre-date the project rename and must not match — the jq filter in `install_zap_from_github` therefore pins the asset regex to `^zap_.*_amd64\.deb$` and walks `releases?per_page=30` newest-first instead of hitting `/releases/latest`, so a one-off hand-published release or a future re-introduced parallel release line can't trip the installer.
+
+### The `update-zap` command (installed; duplicates the install logic on purpose)
+
+Because the `.deb`/Inno installer register no APT repo / update channel, the only update path used to be re-running the whole installer. Both setups now also install a standalone **`update-zap`** command that performs *only* the version-checked Zap install (skipping every config phase) and no-ops when Zap is already current — that "only if necessary" behavior is the same short-circuit `install_zap_from_github` / `Install-Zap` already had (`dpkg-query` version vs the release tag on Linux; the `zap-oss_is1` `DisplayVersion` registry value on Windows).
+
+- **Linux:** `linux/update-zap.sh` (also runnable from the repo) is installed verbatim to `/usr/local/bin/update-zap` by `install_update_command` (inlined in Phase 2, default-**Y** refresh prompt so a re-run updates the tool; `--no` preserves, `--force` refreshes).
+- **Windows:** `windows/update-zap.ps1` + a `windows/update-zap.cmd` PATH shim are copied to `%LOCALAPPDATA%\zap-setup\bin\` by `Install-UpdateCommand` (a function in `setup.ps1`, matching the rule that non-trivial phase logic lives there), which also adds that dir to the **User** PATH idempotently (no admin). The `.cmd` shim is what makes a bare `update-zap` resolve in cmd and PowerShell.
+
+The installed command **must run without the cloned repo present**, so it cannot `source`/dot-source the setup scripts — the GitHub release-walk, the asset filter, and the version short-circuit are therefore **copied** into `update-zap.sh` / `update-zap.ps1` rather than shared. This is deliberate duplication: the **"do not loosen" asset-filter discipline above applies equally to these copies** — when you change the filter (or the release-walk) in `setup.sh`/`setup.ps1`, change it in the matching `update-zap.*` too. Each copy is annotated with a "keep in sync" comment; the Windows `.ps1` stays pure ASCII / no BOM like the other `windows/*.ps1`. The existing `install_zap_from_github` / `Install-Zap` are intentionally **not** refactored to share code.
 
 ### `__HOME__` template substitution
 
@@ -118,7 +133,7 @@ Windows PowerShell 5.1 — the default shell on Windows 10/11 and the configured
 Rule: keep `windows/setup.ps1` and `windows/common.ps1` **pure ASCII** — use `-` not `—`, `'` not `'`/`'`, `"` not `"`/`"`. ASCII parses identically under both ANSI and UTF-8, so no BOM is needed (and a BOM is deliberately avoided — Zap reads the `windows/configs/*` payloads as UTF-8 and a stray BOM would break those parsers, so don't reach for BOMs as a habit here). This is the one place the repo's house em-dash style is dropped; CLAUDE.md and the Linux `*.sh` files keep their em-dashes. Guard it before any edit to either `.ps1`:
 
 ```bash
-grep -nP '[^\x00-\x7F]' windows/setup.ps1 windows/common.ps1   # must print nothing
+grep -nP '[^\x00-\x7F]' windows/setup.ps1 windows/common.ps1 windows/update-zap.ps1 windows/update-zap.cmd   # must print nothing
 ```
 
 ### Install mechanism
