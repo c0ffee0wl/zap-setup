@@ -7,12 +7,20 @@
 # The AI agent is wired to the public OpenAI provider by default, or to a
 # local LiteLLM proxy when one is detected on 127.0.0.1:4000.
 #
-# Shared helpers (colors / log / backup_file / prompt_yes_no) live in
+# Shared helpers (colors / log / backup_file / prompt_yes_no / apt_get) live in
 # linux/common.sh — they're lifted verbatim from /opt/linux-setup/linux-setup.sh
 # and annotated there. The Phase 0 self-update block below is lifted from there
 # too (with a local `cd "$SCRIPT_DIR"` — see its inline comment).
 
 set -eo pipefail
+
+# Deterministic, English command output and locale-independent string handling
+# (e.g. the ${renderer,,} lowercasing in the GPU check) regardless of the host
+# locale. C.UTF-8 is built into glibc (no locale-gen needed on stock/minimal
+# VMs) and preserves UTF-8. Affects only this process, not the system locale.
+# (adapted from linux-setup.sh:8-13)
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
@@ -48,10 +56,10 @@ EOF
 
 # Preserve original args before parsing consumes them via shift.
 # Used by self-update (exec "$0") to re-run with the same flags.
-# (verbatim from linux-setup.sh:72-74)
+# (verbatim from linux-setup.sh:93-95)
 ORIGINAL_ARGS=("$@")
 
-# Parse command-line arguments (verbatim subset of linux-setup.sh:77-104)
+# Parse command-line arguments (verbatim subset of linux-setup.sh:97-129)
 while [[ $# -gt 0 ]]; do
     case $1 in
         --force|-f|--yes|-y)
@@ -73,12 +81,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if running as root (verbatim from linux-setup.sh:121-123)
+# Check if running as root (verbatim from linux-setup.sh:155-158)
 if [[ $EUID -eq 0 ]]; then
     warn "This script should normally not be run as root. Please run as a regular user with sudo privileges."
 fi
 
-# Check if we're on a Debian-based system (verbatim from linux-setup.sh:126-128)
+# Check if we're on a Debian-based system (verbatim from linux-setup.sh:160-163)
 if ! grep -qE "(debian|ID_LIKE.*debian)" /etc/os-release 2>/dev/null; then
     error "This script requires a Debian-based Linux distribution. Detected system is not compatible."
 fi
@@ -107,7 +115,7 @@ LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in the litellm b
 OPENAI_PROVIDER_ID="openai"           # must match providers.id in the openai block of settings.toml
 
 #############################################################################
-# PHASE 0: Self-Update (adapted from linux-setup.sh:483-512 — see inline note)
+# PHASE 0: Self-Update (adapted from linux-setup.sh:873-898 — see inline note)
 #############################################################################
 
 log "Checking for script updates..."
@@ -125,7 +133,7 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     git fetch origin 2>/dev/null || true
 
     # Count commits we don't have that remote has
-    BEHIND=$(git rev-list HEAD..@{u} 2>/dev/null | wc -l || echo "0")
+    BEHIND=$(git rev-list --count HEAD..@{u} 2>/dev/null) || BEHIND=0
 
     if [ "$BEHIND" -gt 0 ]; then
         log "Updates found! Pulling latest changes..."
@@ -145,10 +153,34 @@ fi
 # PHASE 1: Prerequisite packages
 #############################################################################
 
-log "Installing prerequisite packages (curl, jq, ca-certificates, fonts-firacode, libsecret-tools, mesa-utils)..."
-sudo apt-get update -qq
-# mesa-utils provides glxinfo, used by the 3D-acceleration check below.
-sudo apt-get install -y curl jq ca-certificates fonts-firacode libsecret-tools mesa-utils
+# Refresh the APT index at most once per run, and only right before something
+# is actually installed — a re-run where everything is current never pays for
+# an index refresh, while any install (prereqs here, the Zap .deb in Phase 2)
+# still resolves its dependencies against a fresh index.
+APT_INDEX_FRESH=false
+apt_update_once() {
+    if [ "$APT_INDEX_FRESH" = false ]; then
+        apt_get update -qq
+        APT_INDEX_FRESH=true
+    fi
+}
+
+# mesa-utils provides glxinfo, used by the 3D-acceleration check below. Skip
+# apt entirely when every prerequisite is already installed; the db:Status-Status
+# check (not `dpkg -s` or a bare Version read) counts removed-but-config-remains
+# packages as missing.
+PREREQ_PKGS=(curl jq ca-certificates fonts-firacode libsecret-tools mesa-utils)
+missing=()
+for p in "${PREREQ_PKGS[@]}"; do
+    [ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null)" = "installed" ] || missing+=("$p")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+    log "Installing prerequisite packages: ${missing[*]}"
+    apt_update_once
+    apt_get install -y "${missing[@]}"
+else
+    log "Prerequisite packages already installed (${PREREQ_PKGS[*]})"
+fi
 
 #############################################################################
 # GPU preflight: warn if 3D acceleration is missing (Zap renders on the GPU)
@@ -159,9 +191,10 @@ sudo apt-get install -y curl jq ca-certificates fonts-firacode libsecret-tools m
 # Best-effort and non-blocking; this never aborts the install.
 #
 # The OpenGL *renderer string* is the only reliable signal, so we read it with
-# glxinfo (mesa-utils, installed in Phase 1) run as the invoking user — it needs
-# the user's $DISPLAY, and VMware reports acceleration per-user, so it must run
-# as the account that will launch Zap. We flag ONLY a known software rasterizer.
+# glxinfo -B (brief block only; mesa-utils, installed in Phase 1) run as the
+# invoking user — it needs the user's $DISPLAY, and VMware reports acceleration
+# per-user, so it must run as the account that will launch Zap. We flag ONLY a
+# known software rasterizer.
 # Two deliberate non-checks:
 #   - Ignore the "Accelerated: yes/no" line. VMware's host-backed SVGA3D driver
 #     reports "Accelerated: no" while 3D is genuinely working, so keying off it
@@ -178,7 +211,7 @@ check_gpu_acceleration() {
     fi
 
     local renderer
-    renderer=$(glxinfo 2>/dev/null | sed -n 's/.*OpenGL renderer string: //p' | head -n1)
+    renderer=$(glxinfo -B 2>/dev/null | sed -n 's/.*OpenGL renderer string: //p' | head -n1)
     if [ -z "$renderer" ]; then
         warn "Could not read the OpenGL renderer (no X/Wayland display reachable?); skipping the 3D-acceleration check."
         return 0
@@ -261,9 +294,13 @@ install_zap_from_github() {
     # ship one that forces a malformed IE11 UA + extra headers, tripping
     # Cloudflare's bot challenge (403) — and -A presents a modern browser UA, since
     # UA-filtering CDNs/proxies 403 curl's default. Both the API query and the .deb
-    # fetch get them.
+    # fetch get them. Timeouts are bounded so a blackholed or stalled host can't
+    # hang an unattended run: the API fetch gets a hard cap (safe because
+    # --compressed shrinks its ~400 KB of release JSON ~11x), the .deb download
+    # a stall-abort (<1 KB/s for 30s) instead of a hard cap so a slow but
+    # progressing download is never killed.
     local ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
-    meta=$(curl -q --proto '=https' --tlsv1.2 -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
+    meta=$(curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --compressed -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
 
     # Walk releases newest-first and pick the first one publishing a
     # zap_*_amd64.deb asset. We prefer this over /releases/latest so that a
@@ -279,20 +316,30 @@ install_zap_from_github() {
     [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
 
     latest_ver="${tag#v}"
-    installed_ver=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)
-    if [ "$installed_ver" = "$latest_ver" ]; then
-        log "$pkg $installed_ver already installed (latest Zap release)"
+    # Status-aware version read: a removed-but-config-remains package still
+    # reports a Version, which would wrongly skip the (re)install below.
+    installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
+    if [ "${installed_ver%% *}" = "installed" ]; then
+        installed_ver="${installed_ver#* }"
+    else
+        installed_ver=""
+    fi
+    # "Only if newer": >= (not string equality) so a retracted or reordered
+    # upstream release can't silently downgrade a newer installed build.
+    if [ -n "$installed_ver" ] && dpkg --compare-versions "$installed_ver" ge "$latest_ver"; then
+        log "$pkg $installed_ver already installed (>= latest Zap release $latest_ver)"
         return 0
     fi
 
     log "Installing $pkg $latest_ver (was: ${installed_ver:-none})"
     tmp=$(mktemp --suffix=.deb)
     trap 'rm -f "$tmp"' RETURN
-    curl -q --proto '=https' --tlsv1.2 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
+    curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
     # mktemp creates 0600; relax so the _apt sandbox user can read the file
     # (otherwise apt falls back to unsandboxed root fetch and prints a notice).
     chmod 0644 "$tmp"
-    sudo apt-get install -y "$tmp"
+    apt_update_once
+    apt_get install -y "$tmp"
 }
 
 install_zap_from_github
@@ -542,39 +589,35 @@ fi
 echo
 log "Zap setup complete."
 
-# Build the numbered "Next steps" list. There is always a provider now (OpenAI by
-# default, LiteLLM when detected), so the key-paste step (#2) and the AI
-# round-trip verification step are always present — only their text changes to
-# match the active provider. MCP is therefore always step 5.
-if [ "$LITELLM_DETECTED" = true ]; then
-    if [ "$KEYRING_OK" = true ]; then
-        KEY_STEP="The LiteLLM API key is already in the OS keyring — no UI paste needed."
-    else
-        KEY_STEP='Open Settings -> AI -> Agent Providers -> "LiteLLM (local)" -> API Key
+# Build the numbered "Next steps" list. There is always a provider now (OpenAI
+# by default, LiteLLM when detected), so the key-paste step (#2) and the AI
+# round-trip verification step (#4) are always present. The keyring-success
+# text reuses the provider facts Phase 4 bound (KEY_PROVIDER_LABEL /
+# KEY_ENV_NAME); only the genuinely provider-specific texts — Settings-UI
+# name, paste wording, verify endpoint — still branch on LITELLM_DETECTED.
+if [ "$KEYRING_OK" = true ]; then
+    KEY_STEP="The $KEY_PROVIDER_LABEL API key is already in the OS keyring — no UI paste needed."
+elif [ "$LITELLM_DETECTED" = true ]; then
+    KEY_STEP="Open Settings -> AI -> Agent Providers -> \"LiteLLM (local)\" -> API Key
      and paste your LiteLLM master key. (The api_key lives in the OS
      keyring, not in settings.toml. To skip this step on next install,
-     export LITELLM_API_KEY before re-running the script.)'
-    fi
-    VERIFY_STEP='  4. In a block, type any prompt and check Ctrl-O (block log) shows
-     POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
-     proxy listening on the default port 4000 — out of scope for this
-     installer).
-'
+     export $KEY_ENV_NAME before re-running the script.)"
 else
-    if [ "$KEYRING_OK" = true ]; then
-        KEY_STEP="The OpenAI API key is already in the OS keyring — no UI paste needed."
-    else
-        KEY_STEP='Open Settings -> AI -> Agent Providers -> "OpenAI" -> API Key and
+    KEY_STEP="Open Settings -> AI -> Agent Providers -> \"OpenAI\" -> API Key and
      paste your OpenAI API key. (The api_key lives in the OS keyring, not
      in settings.toml. To skip this step on next install, export
-     OPENAI_API_KEY before re-running the script.)'
-    fi
-    VERIFY_STEP='  4. In a block, type any prompt and check Ctrl-O (block log) shows
-     POST api.openai.com/v1/chat/completions -> 200 (needs a valid OpenAI
-     API key with access to the gpt-5.4 model).
-'
+     $KEY_ENV_NAME before re-running the script.)"
 fi
-MCP_NUM=5
+if [ "$LITELLM_DETECTED" = true ]; then
+    VERIFY_STEP='In a block, type any prompt and check Ctrl-O (block log) shows
+     POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
+     proxy listening on the default port 4000 — out of scope for this
+     installer).'
+else
+    VERIFY_STEP='In a block, type any prompt and check Ctrl-O (block log) shows
+     POST api.openai.com/v1/chat/completions -> 200 (needs a valid OpenAI
+     API key with access to the gpt-5.4 model).'
+fi
 cat << EOF
 
 Next steps:
@@ -582,7 +625,8 @@ Next steps:
   2. $KEY_STEP
   3. Verify Settings -> Appearance shows "Terminator Black on White" + Fira
      Code 13.
-${VERIFY_STEP}  ${MCP_NUM}. The microsoft-learn and deepwiki MCP servers are registered in
+  4. $VERIFY_STEP
+  5. The microsoft-learn and deepwiki MCP servers are registered in
      $ZAP_HOME_DIR/.mcp.json. In the agent panel, confirm both appear in
      the available MCP tools list (if they're missing, check that
      \$WARP_DATA_PROFILE is unset — it changes the dir Zap reads).

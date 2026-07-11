@@ -12,15 +12,56 @@
 
 set -eo pipefail
 
+# Deterministic, English command output regardless of the host locale.
+# C.UTF-8 is built into glibc and preserves UTF-8. Affects only this process.
+# (adapted from linux-setup.sh:8-13)
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
 # --- Minimal logging (mirrors linux/common.sh; copied so this stays standalone)
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# Colors suppressed when not a TTY or when NO_COLOR is set (as in common.sh).
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' NC=''
+fi
 
 log()   { echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# apt-get wrapper with a lock timeout so a boot-time apt job (apt-daily,
+# unattended-upgrades) holding the lock delays rather than fails the update.
+# Copied from linux/common.sh's apt_get (verbatim from linux-setup.sh:228-242)
+# — keep in sync. FORCE_MODE/NO_MODE are pinned false (this script has no
+# unattended mode, and pinning stops an exported env var from silently
+# switching apt to conffile-forcing mode), so the interactive branch always runs.
+FORCE_MODE=false
+NO_MODE=false
+apt_get() {
+    if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
+        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
+            -o DPkg::Lock::Timeout=300 \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+    else
+        sudo apt-get -o DPkg::Lock::Timeout=300 "$@"
+    fi
+}
+
+# Refresh the APT index once before the install so the .deb's dependencies
+# resolve against fresh lists. Copied from setup.sh — keep in sync (the
+# once-guard is degenerate here with a single install site, but keeping the
+# same shape keeps the twin install functions line-identical).
+APT_INDEX_FRESH=false
+apt_update_once() {
+    if [ "$APT_INDEX_FRESH" = false ]; then
+        apt_get update -qq
+        APT_INDEX_FRESH=true
+    fi
+}
 
 show_usage() {
     cat << EOF
@@ -62,9 +103,12 @@ update_zap_from_github() {
     log "Resolving latest Zap release on github.com/${repo}..."
     local meta tag url latest_ver installed_ver tmp
     # Hardened curl: -q (first) ignores a hostile ~/.curlrc; -A presents a modern
-    # browser UA so UA-filtering CDNs don't 403. (Mirrors setup.sh.)
+    # browser UA so UA-filtering CDNs don't 403. Bounded timeouts: hard cap on
+    # the API fetch (safe because --compressed shrinks its release JSON ~11x),
+    # stall-abort (not a hard cap) on the .deb download so a slow but
+    # progressing download is never killed. (Mirrors setup.sh.)
     local ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
-    meta=$(curl -q --proto '=https' --tlsv1.2 -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
+    meta=$(curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --compressed -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
 
     # Walk releases newest-first; pick the first publishing a zap_*_amd64.deb.
     # Single jq pass returns tag+url from the SAME release record so they can't
@@ -79,19 +123,29 @@ update_zap_from_github() {
     [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
 
     latest_ver="${tag#v}"
-    installed_ver=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null || true)
-    if [ "$installed_ver" = "$latest_ver" ]; then
-        log "$pkg $installed_ver already installed (latest Zap release)"
+    # Status-aware version read: a removed-but-config-remains package still
+    # reports a Version, which would wrongly skip the (re)install below.
+    installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
+    if [ "${installed_ver%% *}" = "installed" ]; then
+        installed_ver="${installed_ver#* }"
+    else
+        installed_ver=""
+    fi
+    # "Only if newer": >= (not string equality) so a retracted or reordered
+    # upstream release can't silently downgrade a newer installed build.
+    if [ -n "$installed_ver" ] && dpkg --compare-versions "$installed_ver" ge "$latest_ver"; then
+        log "$pkg $installed_ver already installed (>= latest Zap release $latest_ver)"
         return 0
     fi
 
     log "Updating $pkg $latest_ver (was: ${installed_ver:-none})"
     tmp=$(mktemp --suffix=.deb)
     trap 'rm -f "$tmp"' RETURN
-    curl -q --proto '=https' --tlsv1.2 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
+    curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
     # mktemp creates 0600; relax so the _apt sandbox user can read the file.
     chmod 0644 "$tmp"
-    sudo apt-get install -y "$tmp"
+    apt_update_once
+    apt_get install -y "$tmp"
     log "Zap updated to $latest_ver."
 }
 

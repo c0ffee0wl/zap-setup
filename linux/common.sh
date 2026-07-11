@@ -22,19 +22,22 @@ _ZAP_COMMON_SOURCED=1
 : "${NO_MODE:=false}"
 
 #############################################################################
-# Colors (verbatim from linux-setup.sh:14-19)
+# Colors (verbatim from linux-setup.sh:28-37)
 #############################################################################
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Colors for output (suppressed when not a TTY or when NO_COLOR is set)
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m' # No Color
+else
+    RED='' GREEN='' YELLOW='' BLUE='' NC=''
+fi
 
 #############################################################################
-# Logging (label-only coloring; intentional divergence from linux-setup.sh:106-118,
-# which colors the whole line — matches ct-kali-llm/claude-litellm common.sh and
-# prevents the green from bleeding into message text)
+# Logging (verbatim from linux-setup.sh:131-143)
 #############################################################################
 
 log() {
@@ -51,20 +54,23 @@ error() {
 }
 
 #############################################################################
-# Backup a file with timestamp (verbatim from linux-setup.sh:131-138)
+# Backup a file with timestamp, --sudo for root-owned paths
+# (verbatim from linux-setup.sh:165-176)
 #############################################################################
 
 backup_file() {
+    local sudo_cmd=""
+    if [ "$1" = "--sudo" ]; then sudo_cmd="sudo"; shift; fi
     local file_path="$1"
     if [ -f "$file_path" ]; then
         local backup_path="${file_path}.backup.$(date +'%Y-%m-%d_%H-%M-%S')"
-        cp "$file_path" "$backup_path"
+        $sudo_cmd cp "$file_path" "$backup_path"
         log "Backed up to: $backup_path"
     fi
 }
 
 #############################################################################
-# Prompt user with yes/no question (verbatim from linux-setup.sh:143-173)
+# Prompt user with yes/no question (verbatim from linux-setup.sh:285-318)
 # Usage: prompt_yes_no "Question?" "Y" (or "N" for default No)
 # Returns: 0 for yes, 1 for no
 #############################################################################
@@ -98,5 +104,25 @@ prompt_yes_no() {
         return 0
     else
         return 1
+    fi
+}
+
+#############################################################################
+# apt-get wrapper (verbatim from linux-setup.sh:228-242)
+#############################################################################
+
+# apt-get wrapper: in force/no mode run fully non-interactively so debconf
+# dialogs, dpkg conffile prompts, and Ubuntu's needrestart menu can't stall
+# unattended runs. sudo resets the environment, so the variables are passed
+# on sudo's command line rather than exported. DPkg::Lock::Timeout makes apt
+# wait for the lock instead of aborting when a boot-time apt job (cloud-init,
+# apt-daily, unattended-upgrades) still holds it - the classic cloud-init race.
+apt_get() {
+    if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
+        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
+            -o DPkg::Lock::Timeout=300 \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+    else
+        sudo apt-get -o DPkg::Lock::Timeout=300 "$@"
     fi
 }
