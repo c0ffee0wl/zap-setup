@@ -7,6 +7,8 @@
 # The helpers below were lifted character-for-character from
 # /opt/linux-setup/linux-setup.sh — line ranges annotated per block.
 # They should evolve in lockstep with that upstream; do not refactor.
+# One deliberate exception: apt_get is adapted (sudo env — see its note);
+# do not restore the upstream form on a re-sync until upstream adopts the fix.
 
 # Source guard - prevent double-sourcing
 [[ -n "${_ZAP_COMMON_SOURCED:-}" ]] && return
@@ -108,18 +110,27 @@ prompt_yes_no() {
 }
 
 #############################################################################
-# apt-get wrapper (verbatim from linux-setup.sh:228-242)
+# apt-get wrapper (adapted from linux-setup.sh:228-242)
 #############################################################################
 
 # apt-get wrapper: in force/no mode run fully non-interactively so debconf
 # dialogs, dpkg conffile prompts, and Ubuntu's needrestart menu can't stall
-# unattended runs. sudo resets the environment, so the variables are passed
-# on sudo's command line rather than exported. DPkg::Lock::Timeout makes apt
-# wait for the lock instead of aborting when a boot-time apt job (cloud-init,
+# unattended runs. sudo resets the environment, and setting VAR=val on sudo's
+# own command line needs the SETENV sudoers privilege — implied for `ALL`
+# rules (stock sudoers), but refused by restricted/managed sudoers (a grant
+# narrower than ALL, or NOSETENV) with "you are not allowed to set the
+# following environment variables" — so the variables are set by env(1)
+# AFTER the privilege boundary instead, which needs no setenv privilege.
+# Upstream linux-setup.sh still uses the sudo-command-line form and fails
+# the same way under such policies. (A command-whitelist sudoers refuses the
+# env form too, but such a policy already breaks this installer's other sudo
+# calls — the env form covers the broad-grant-with-setenv-refused case.)
+# DPkg::Lock::Timeout makes apt wait for
+# the lock instead of aborting when a boot-time apt job (cloud-init,
 # apt-daily, unattended-upgrades) still holds it - the classic cloud-init race.
 apt_get() {
     if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
+        sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
             -o DPkg::Lock::Timeout=300 \
             -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
     else

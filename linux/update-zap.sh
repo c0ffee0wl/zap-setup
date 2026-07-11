@@ -35,15 +35,16 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # apt-get wrapper with a lock timeout so a boot-time apt job (apt-daily,
 # unattended-upgrades) holding the lock delays rather than fails the update.
-# Copied from linux/common.sh's apt_get (verbatim from linux-setup.sh:228-242)
-# — keep in sync. FORCE_MODE/NO_MODE are pinned false (this script has no
-# unattended mode, and pinning stops an exported env var from silently
-# switching apt to conffile-forcing mode), so the interactive branch always runs.
+# Copied from linux/common.sh's apt_get (adapted from linux-setup.sh:228-242;
+# the sudo env form is required — see the note in common.sh) — keep in sync.
+# FORCE_MODE/NO_MODE are pinned false (this script has no unattended mode,
+# and pinning stops an exported env var from silently switching apt to
+# conffile-forcing mode), so the interactive branch always runs.
 FORCE_MODE=false
 NO_MODE=false
 apt_get() {
     if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
+        sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
             -o DPkg::Lock::Timeout=300 \
             -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
     else
