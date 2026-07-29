@@ -6,8 +6,8 @@
     Installs Zap from the latest GitHub ZapSetup.exe and configures it with the
     built-in Dracula theme + Terminator-style keybindings, a Windows PowerShell
     new-session shell override, the DirectX 12 graphics backend, a bash-style
-    Ctrl+D handler for PowerShell, and (optionally) an Azure OpenAI provider
-    whose API key is written straight to the place Zap reads it on Windows.
+    Ctrl+D handler for PowerShell, and (optionally) an Azure provider whose
+    API key is written straight to the place Zap reads it on Windows.
 
     This is the Windows sibling of linux/setup.sh; the phases mirror that
     script. Shared helpers live in common.ps1.
@@ -68,7 +68,7 @@ Zap Setup Script v$Version (Windows)
 Installs Zap from the latest GitHub ZapSetup.exe and configures it with the
 built-in Dracula theme, Terminator-style keybindings, a Windows PowerShell
 session shell, the DirectX 12 backend, a bash-style Ctrl+D handler, and an
-optional Azure OpenAI provider.
+optional Azure provider.
 
 Usage: .\setup.ps1 [OPTIONS]
 
@@ -121,7 +121,7 @@ $ZapHomeDir  = Join-Path $env:USERPROFILE $zapHomeName
 $SecretsServiceName = 'dev.zap.Zap'
 $SecretsKey         = 'AgentProviderSecrets'
 $SecretsFile        = Join-Path $StateDir "$SecretsServiceName-$SecretsKey"
-$AzureProviderId    = 'azure-openai'
+$AzureProviderId    = 'azure'
 
 #############################################################################
 # Phase 1 helper - warn if the GPU lacks 3D acceleration (Zap renders on GPU)
@@ -583,8 +583,13 @@ function Test-AzureEndpoint {
 
 function Resolve-AzureBaseUrl {
     # Normalize whatever was pasted down to scheme+host, append /openai/v1/, and
-    # probe. cognitiveservices hosts get openai.azure.com / services.ai.azure.com
-    # fallbacks because the v1 route is documented on those hosts.
+    # probe. services.ai.azure.com is the preferred host - the Foundry endpoint
+    # form - so any recognized Azure host (services.ai / openai /
+    # cognitiveservices) is reduced to its resource name and probed there first,
+    # then at the pasted host, then at openai.azure.com. cognitiveservices is
+    # recognized as INPUT only, never added as a probe target of its own - the
+    # v1 route is documented on the other two. A host matching none of those
+    # families is a private gateway and is used verbatim.
     param([string]$Endpoint, [string]$Key)
 
     $raw = $Endpoint.Trim()
@@ -595,11 +600,15 @@ function Resolve-AzureBaseUrl {
     $build = { param($h) "{0}://{1}/openai/v1/" -f $scheme, $h }
 
     $candidates = New-Object System.Collections.Generic.List[string]
-    $candidates.Add($hostName)
-    if ($hostName -match '^(.*?)\.cognitiveservices\.azure\.com$') {
+    if ($hostName -match '^(.*?)\.(services\.ai|openai|cognitiveservices)\.azure\.com$') {
         $res = $Matches[1]
-        $candidates.Add("$res.openai.azure.com")
         $candidates.Add("$res.services.ai.azure.com")
+        # The two rewrites already cover a pasted services.ai/openai host; only
+        # a cognitiveservices paste has to be probed as-is.
+        if ($Matches[2] -eq 'cognitiveservices') { $candidates.Add($hostName) }
+        $candidates.Add("$res.openai.azure.com")
+    } else {
+        $candidates.Add($hostName)
     }
 
     foreach ($h in $candidates) {
@@ -626,28 +635,33 @@ function Add-AzureProviderToSettings {
 
     # Multi-line inline-table array form Zap's own serializer writes (keys
     # alphabetical, trailing commas) so the first in-app save makes no diff.
+    # api_type "open_ai_resp" = the Responses API: genai's OpenAIResp adapter
+    # POSTs to base_url + "responses".
+    #
+    # The model fields are identical to both provider blocks in
+    # linux/configs/settings.toml (the reference copy) - bump them together.
     $providerBlock = @"
 $begin
 [agents.warp_agent]
 providers = [
   {
-    api_type = "open_ai",
+    api_type = "open_ai_resp",
     base_url = "$BaseUrl",
     id = "$AzureProviderId",
     kind = "open_ai_compatible",
     models = [
       {
         audio = false,
-        context_window = 400000,
-        id = "gpt-5.4-mini",
+        context_window = 1050000,
+        id = "gpt-5.6-terra",
         image = true,
         max_output_tokens = 128000,
-        name = "GPT-5.4 Mini",
+        name = "GPT-5.6 Terra",
         pdf = true,
         reasoning = true,
       },
     ],
-    name = "Azure OpenAI",
+    name = "Azure",
   },
 ]
 $end
@@ -688,6 +702,8 @@ function Write-AzureKeyToDpapi {
         }
     }
     $map[$AzureProviderId] = $Key
+    # Pre-rename id - drop it so an upgraded install keeps no dead key.
+    $map.Remove('azure-openai')
 
     $json = $map | ConvertTo-Json -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -721,9 +737,9 @@ function Invoke-AzureOptIn {
     else {
         if (-not (Confirm-YesNo "Pre-configure Azure as the AI provider?" 'N')) { return $false }
         $endpoint = Read-DialogText -Title 'Azure endpoint' `
-            -Prompt 'Paste your Azure resource endpoint (e.g. https://my-resource.cognitiveservices.azure.com/):'
+            -Prompt 'Paste your Azure resource endpoint (e.g. https://my-resource.services.ai.azure.com/):'
         if ([string]::IsNullOrWhiteSpace($endpoint)) { Write-Warn "No endpoint entered - skipping Azure setup."; return $false }
-        $key = Read-DialogSecret -Title 'Azure API key' -Prompt 'Paste your Azure OpenAI API key:'
+        $key = Read-DialogSecret -Title 'Azure API key' -Prompt 'Paste your Azure API key:'
         if ([string]::IsNullOrWhiteSpace($key)) { Write-Warn "No API key entered - skipping Azure setup."; return $false }
     }
 
@@ -870,7 +886,7 @@ Add-ClaudeMarketplace
 Write-Host ''
 Write-Log "Zap setup complete."
 if ($azureConfigured) {
-    $keyStep = "Azure OpenAI is configured and its API key is already in the DPAPI store ($($script:AzureBaseUrl)) - no UI paste needed."
+    $keyStep = "Azure is configured and its API key is already in the DPAPI store ($($script:AzureBaseUrl)) - no UI paste needed."
 } else {
     $keyStep = 'No AI provider was configured. Add one via Settings -> AI -> Agent Providers (or re-run and accept the Azure prompt, or set ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY).'
 }

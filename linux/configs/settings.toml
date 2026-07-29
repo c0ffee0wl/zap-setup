@@ -131,6 +131,11 @@ show_block_dividers = false
 # proxy dispatches to the right Azure deployment; `name` is the
 # human-readable label shown in the provider picker.
 #
+# api_type "open_ai_resp" = the Responses API — genai's OpenAIResp adapter
+# POSTs to `base_url` + "responses". LiteLLM proxies /v1/responses, but only
+# on recent builds and only when the route is enabled; if this proxy answers
+# 404 there, set api_type back to "open_ai" (Chat Completions).
+#
 # Written as a multi-line inline-table array (not a [[...]] array-of-tables)
 # to match Zap's own serializer output — same rationale as the theme block
 # above: it keeps re-runs from showing a spurious "overwrite?" diff after Zap
@@ -141,21 +146,25 @@ show_block_dividers = false
 # reasoning enables CoT; image/pdf/audio are tri-state force flags
 # (present = override models.dev inference, absent = auto). tool_call
 # defaults to true, so it's omitted.
+#
+# The model fields below are identical to the openai block and to the block
+# Add-AzureProviderToSettings injects in windows/setup.ps1 — bump them
+# together. Only `id` and `name` differ here (the proxy routing prefix).
 [agents.warp_agent]
 providers = [
   {
-    api_type = "open_ai",
+    api_type = "open_ai_resp",
     base_url = "http://127.0.0.1:4000/v1/",
     id = "litellm-local",
     kind = "open_ai_compatible",
     models = [
       {
         audio = false,
-        context_window = 400000,
-        id = "azure/gpt-5.4",
+        context_window = 1050000,
+        id = "azure/gpt-5.6-terra",
         image = true,
         max_output_tokens = 128000,
-        name = "Azure GPT 5.4",
+        name = "Azure GPT 5.6 Terra",
         pdf = true,
         reasoning = true,
       },
@@ -174,25 +183,29 @@ providers = [
 # output is ever parsed.
 #
 # Same provider/model shape as the litellm block, pointed at api.openai.com
-# (api_type "open_ai" = Chat Completions; base_url MUST end in /). Unlike the
-# local proxy, this will not work without a real key: paste it once via
-# Settings → AI → Agent Providers → OpenAI → API Key, or export OPENAI_API_KEY
-# before running setup and the script stashes it in the OS keyring for you.
+# (api_type "open_ai_resp" = the Responses API, POST <base_url>responses;
+# base_url MUST end in /). Unlike the local proxy, this will not work without
+# a real key: paste it once via Settings → AI → Agent Providers → OpenAI →
+# API Key, or export OPENAI_API_KEY before running setup and the script
+# stashes it in the OS keyring for you.
+#
+# Model fields are identical to the litellm block above and to the block
+# Add-AzureProviderToSettings injects in windows/setup.ps1 — bump together.
 [agents.warp_agent]
 providers = [
   {
-    api_type = "open_ai",
+    api_type = "open_ai_resp",
     base_url = "https://api.openai.com/v1/",
     id = "openai",
     kind = "open_ai_compatible",
     models = [
       {
         audio = false,
-        context_window = 400000,
-        id = "gpt-5.4",
+        context_window = 1050000,
+        id = "gpt-5.6-terra",
         image = true,
         max_output_tokens = 128000,
-        name = "GPT-5.4",
+        name = "GPT-5.6 Terra",
         pdf = true,
         reasoning = true,
       },

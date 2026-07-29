@@ -208,3 +208,6 @@ marimo/_lsp/
 __marimo__/
 
 PLAN*
+
+# Superpowers brainstorming/planning artifacts - local scratch, not shipped
+docs/superpowers/

@@ -34,7 +34,7 @@ zap                                  # launch
 
 Open Zap and you have a working terminal straight away. The AI wiring is optional; Zap is a perfectly good terminal without any of it.
 
-Where it gets good is the built-in LLM integration, and that's really the reason to bother. By default setup pre-configures an agent provider named "OpenAI" aimed at `https://api.openai.com/v1/` with the `gpt-5.4` model, so the agent works the moment you add a key. Need one? Create it at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it once via Settings → AI → Agent Providers → OpenAI → API Key, or export `OPENAI_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
+Where it gets good is the built-in LLM integration, and that's really the reason to bother. By default setup pre-configures an agent provider named "OpenAI" aimed at `https://api.openai.com/v1/` with the `gpt-5.6-terra` model over the Responses API, so the agent works the moment you add a key. Need one? Create it at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it once via Settings → AI → Agent Providers → OpenAI → API Key, or export `OPENAI_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
 
 Running a local LiteLLM proxy instead? Setup detects it (the `litellm` CLI on `PATH`, or anything answering on `127.0.0.1:4000`) and wires an agent provider named "LiteLLM (local)" aimed at `http://127.0.0.1:4000/v1/` in place of OpenAI. The key works the same way: paste it via Settings → AI → Agent Providers → LiteLLM (local) → API Key, or export `LITELLM_API_KEY` before running. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup the LiteLLM path is built for.
 
@@ -55,7 +55,7 @@ Setup installs an **`update-zap`** command to `/usr/local/bin/update-zap`, so yo
 update-zap          # checks GitHub; installs the latest .deb only if it's newer
 ```
 
-It walks the same release filter the installer uses and short-circuits when Zap is already current (printing `zap <version> already installed (latest Zap release)`), so it's safe to run anytime. The `apt` install step needs sudo (you'll be prompted). It updates only the Zap binary — your configs, keybindings, and provider are left untouched. You can also run it straight from the repo as `./linux/update-zap.sh`.
+It walks the same release filter the installer uses and short-circuits when Zap is already current (printing `zap <version> already installed (latest Zap release)`), so it's safe to run anytime. The `apt` install step needs sudo (you'll be prompted). It touches only the Zap binary and leaves your configs, keybindings, and provider alone. You can also run it straight from the repo as `./linux/update-zap.sh`.
 
 The Windows installer ships the same command; see [Windows](#windows).
 
@@ -116,7 +116,7 @@ When 3D acceleration genuinely isn't available, Zap still starts. Pin a backend 
 
 ## Windows
 
-A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It also pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure OpenAI as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
+A PowerShell sibling installer lives in `windows/`. It fetches the latest `ZapSetup.exe` (Inno Setup) from upstream, installs it silently per-user (no admin), and writes the same opinionated configs adapted for Windows: the built-in **Dracula** theme, the Terminator-parity keybindings, and the `mcp.json` documentation servers. It also pins Windows PowerShell 5.1 as the new-session shell and the DirectX 12 graphics backend, installs a bash-style Ctrl+D handler, and can pre-configure Azure as the provider, writing the API key straight to where Zap reads it. Like the Linux script, it registers the Warp/Zap Claude Code plugin (`warpdotdev/claude-code-warp`) when the `claude` CLI is present.
 
 Requires Windows 10 build 18362+ (ConPTY). x64.
 
@@ -126,7 +126,7 @@ cd $env:USERPROFILE\zap-setup
 .\windows\setup.ps1
 ```
 
-If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.cognitiveservices.azure.com/`) and API key. The script normalizes it to the OpenAI-compatible v1 base URL (`…/openai/v1/`), probes it (falling back to the `openai.azure.com` host if the cognitiveservices host doesn't serve the v1 route), writes the provider into `settings.toml`, and stores the key in Zap's DPAPI secrets file, so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
+If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.services.ai.azure.com/`) and API key. Any of the Azure endpoint forms work: Foundry (`services.ai`), `openai`, or `cognitiveservices`. The script normalizes what you paste to the OpenAI-compatible v1 base URL (`…/openai/v1/`), prefers the Foundry host, and checks it with your key before writing anything. It then writes the provider (`gpt-5.6-terra` over the Responses API) into `settings.toml` and stores the key in Zap's DPAPI secrets file, so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
 
 ### Setup modes
 
@@ -153,9 +153,9 @@ Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1   (Ctrl+D handler; 
 Windows-specific notes:
 
 - **No Credential Manager.** Zap stores provider API keys as a single DPAPI-encrypted file (`CryptProtectData`, CurrentUser scope, no entropy), not in the Credential Manager. The installer writes it with .NET `ProtectedData.Protect`, read-merging any existing entries so other providers' keys aren't clobbered.
-- **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer` and appends `chat/completions` to `base_url`, so only the `…/openai/v1/` form works; the classic `…/openai/deployments/{name}/chat/completions?api-version=…` route (which expects the `api-key` header) would return 401.
+- **Azure must use the v1 route.** Zap's agent adapter only sends `Authorization: Bearer`, and on the Responses api_type it appends `responses` to `base_url`. So only the `…/openai/v1/` form works, giving `…/openai/v1/responses`. The classic `…/openai/deployments/{name}/chat/completions?api-version=…` route expects the `api-key` header and would return 401.
 - **Ctrl+D.** Zap forwards Ctrl+D to the PTY as EOF; bash exits on an empty line, PowerShell does not. The installed handler replicates bash: Ctrl+D on an empty prompt runs `exit` (closing the pane), otherwise deletes the char under the cursor. It is written into both the Windows PowerShell 5.1 profile and (if `pwsh` is installed) the PowerShell 7+ profile.
 - **Dracula is built in.** No theme YAML is shipped; `settings.toml` just selects `theme = "dracula"`. The font family is left unset (Zap defaults to its bundled Hack).
-- **Updating.** Setup installs an `update-zap` command (a `.cmd` shim + `update-zap.ps1`) to `%LOCALAPPDATA%\zap-setup\bin` and adds that dir to your User PATH, so you can run `update-zap` from any new terminal to install the latest release only when it's newer - the same behavior as the Linux command. Open a fresh terminal after the first install so the PATH entry takes effect.
+- **Updating.** Setup installs an `update-zap` command (a `.cmd` shim + `update-zap.ps1`) to `%LOCALAPPDATA%\zap-setup\bin` and adds that dir to your User PATH, so you can run `update-zap` from any new terminal to install the latest release only when it's newer, the same behavior as the Linux command. Open a fresh terminal after the first install so the PATH entry takes effect.
 
 Idempotency mirrors the Linux script: a re-run with no upstream change is a no-op (version match via the `zap-oss_is1` uninstall registry key; overwrite prompts default **N**). The Ctrl+D profile block and the Azure provider block are sentinel-delimited (`# >>> zap-setup … >>>`) and regenerated in place, so re-runs replace rather than duplicate them.

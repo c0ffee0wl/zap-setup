@@ -113,6 +113,7 @@ ZAP_KEYRING_SERVICE="dev.zap.Zap"
 ZAP_KEYRING_KEY="AgentProviderSecrets"
 LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in the litellm block of settings.toml
 OPENAI_PROVIDER_ID="openai"           # must match providers.id in the openai block of settings.toml
+OPENAI_MODEL_ID="gpt-5.6-terra"       # must match models.id in the openai block of settings.toml
 
 #############################################################################
 # PHASE 0: Self-Update (adapted from linux-setup.sh:873-898 — see inline note)
@@ -610,13 +611,13 @@ else
 fi
 if [ "$LITELLM_DETECTED" = true ]; then
     VERIFY_STEP='In a block, type any prompt and check Ctrl-O (block log) shows
-     POST 127.0.0.1:4000/v1/chat/completions -> 200 (requires a LiteLLM
-     proxy listening on the default port 4000 — out of scope for this
-     installer).'
+     POST 127.0.0.1:4000/v1/responses -> 200 (requires a LiteLLM proxy
+     listening on the default port 4000, with the Responses route enabled —
+     both out of scope for this installer).'
 else
-    VERIFY_STEP='In a block, type any prompt and check Ctrl-O (block log) shows
-     POST api.openai.com/v1/chat/completions -> 200 (needs a valid OpenAI
-     API key with access to the gpt-5.4 model).'
+    VERIFY_STEP="In a block, type any prompt and check Ctrl-O (block log) shows
+     POST api.openai.com/v1/responses -> 200 (needs a valid OpenAI API key
+     with access to the $OPENAI_MODEL_ID model)."
 fi
 cat << EOF
 
