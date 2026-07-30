@@ -48,11 +48,10 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch { }
 
-# Reconstruct the original args so self-update can re-exec with the same flags.
-$OriginalArgs = @()
-if ($Force) { $OriginalArgs += '-Force' }
-if ($No)    { $OriginalArgs += '-No' }
-if ($Help)  { $OriginalArgs += '-Help' }
+# Reconstruct the original args so self-update can re-exec with the same
+# flags. Built from the bound parameters (all switches) so a future parameter
+# is forwarded automatically instead of silently dropped on re-exec.
+$OriginalArgs = @($PSBoundParameters.Keys | Where-Object { $PSBoundParameters[$_] } | ForEach-Object { "-$_" })
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 
@@ -111,11 +110,13 @@ $ConfigsDir = Join-Path $PSScriptRoot 'configs'
 $ConfigDir = Join-Path $env:LOCALAPPDATA 'zap\Zap\config'
 $StateDir  = Join-Path $env:LOCALAPPDATA 'zap\Zap\data'
 
-# .mcp.json lives in the home-relative OSS dir (~/.zap), with a -<profile>
-# suffix when WARP_DATA_PROFILE is set (mirrors warp_home_config_dir_name()).
-$dataProfile = $env:WARP_DATA_PROFILE
-$zapHomeName = if ([string]::IsNullOrEmpty($dataProfile)) { '.zap' } else { ".zap-$dataProfile" }
-$ZapHomeDir  = Join-Path $env:USERPROFILE $zapHomeName
+# .mcp.json lives in the home-relative OSS dir (~/.zap). Deliberately NOT
+# namespaced by WARP_DATA_PROFILE: ChannelState::data_profile()
+# (crates/warp_core/src/channel/state.rs) reads that env var only under
+# cfg!(debug_assertions), so the release builds this installer fetches always
+# read plain ~\.zap - mirroring the var here would write the file where Zap
+# never looks.
+$ZapHomeDir  = Join-Path $env:USERPROFILE '.zap'
 
 # DPAPI secrets store: state_dir\{service}-{key}; JSON map {provider_id: key}.
 $SecretsServiceName = 'dev.zap.Zap'
@@ -142,7 +143,7 @@ function Test-GpuAcceleration {
     # than spawn it.
     $names = @()
     try {
-        $names = @((Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop).Name |
+        $names = @((Get-CimInstance -ClassName Win32_VideoController -Property Name -ErrorAction Stop).Name |
             Where-Object { $_ })
     } catch {
         Write-Warn "Could not query the display adapter (WMI); skipping the 3D-acceleration check."
@@ -232,6 +233,24 @@ function Get-InstalledZapVersion {
     return $null
 }
 
+function Test-ZapVersionCurrent {
+    # "Only if newer": mirrors the Linux `dpkg --compare-versions ... ge` so a
+    # retracted or reordered upstream release never silently downgrades a
+    # newer installed build. Both sides are stripped of a leading 'v' (Inno's
+    # DisplayVersion may carry the tag's 'v'; $rel.Version is already de-v'd).
+    # [version] handles the dotted numeric tags Zap publishes; when either
+    # side does not parse, fall back to plain string equality (the pre-compare
+    # behavior). Copied into update-zap.ps1 - keep in sync.
+    param([string]$Installed, [string]$Latest)
+    $i = $Installed -replace '^[vV]', ''
+    $l = $Latest -replace '^[vV]', ''
+    $iv = $null; $lv = $null
+    if ([version]::TryParse($i, [ref]$iv) -and [version]::TryParse($l, [ref]$lv)) {
+        return ($iv -ge $lv)
+    }
+    return ($i -eq $l)
+}
+
 function Get-ZapInstallDir {
     # Where Inno put the program files - InstallLocation from the uninstall key,
     # falling back to the directory of the UninstallString ({app}\unins000.exe).
@@ -283,7 +302,11 @@ function Resolve-LatestZapRelease {
     $headers = @{ 'User-Agent' = 'zap-setup'; 'Accept' = 'application/vnd.github+json' }
     if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
     try {
-        $releases = Invoke-RestMethod -Uri $api -Headers $headers -Method Get
+        # 60s cap mirrors the Linux release query's --max-time 60 so a
+        # blackholed host can't hang an unattended run. The installer
+        # download below stays uncapped: -TimeoutSec is a TOTAL cap and
+        # can't express curl's stall-abort (--speed-limit) semantics.
+        $releases = Invoke-RestMethod -Uri $api -Headers $headers -Method Get -TimeoutSec 60
     } catch {
         Write-Err "Failed to query GitHub releases for $Repo : $($_.Exception.Message)"
     }
@@ -307,10 +330,8 @@ function Install-Zap {
     Write-Log "Latest Zap release: $($rel.Tag)"
 
     $installed = Get-InstalledZapVersion
-    # Inno's DisplayVersion may carry a leading 'v' (the release tag does; the
-    # de-v'd $rel.Version does not), so normalize both sides before comparing.
-    if ($installed -and (($installed -replace '^[vV]', '') -eq ($rel.Version -replace '^[vV]', ''))) {
-        Write-Log "Zap $installed already installed (latest release)"
+    if ($installed -and (Test-ZapVersionCurrent -Installed $installed -Latest $rel.Version)) {
+        Write-Log "Zap $installed already installed (>= latest release $($rel.Version))"
         return
     }
     $was = if ($installed) { $installed } else { 'none' }
@@ -330,9 +351,12 @@ function Install-Zap {
         # alive and for a short grace window after it exits (to catch a detached
         # launch whose window appears just after exit). [Run] is the last phase,
         # after all [Files] are copied, so closing it loses nothing.
+        # Captured BEFORE launch so the StartTime gate in Close-SpawnedZap can
+        # never race a window the installer spawns (never $proc.StartTime,
+        # which throws on a fast/elevated process under EAP=Stop).
+        $startedAt  = Get-Date
         $proc = Start-Process -FilePath $tmp `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
-        $startedAt  = Get-Date
         $deadline   = (Get-Date).AddMinutes(5)
         $closedPids = @{}
         while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
@@ -551,19 +575,11 @@ function Show-ZapInputDialog {
     }
 }
 
-function Read-DialogText {
-    param([string]$Title, [string]$Prompt)
-    return (Show-ZapInputDialog -Title $Title -Prompt $Prompt)
-}
-
-function Read-DialogSecret {
-    param([string]$Title, [string]$Prompt)
-    return (Show-ZapInputDialog -Title $Title -Prompt $Prompt -Secret)
-}
-
 function Test-AzureEndpoint {
-    # Returns 'ok' (route reachable + key accepted/validated), 'auth' (route
-    # there, 401/403), 'notfound' (404), or 'other' (network/unknown).
+    # Returns 'ok' (route reachable + key accepted/validated), 'reachable'
+    # (route answered 400 - alive, but the probe itself was rejected so the
+    # endpoint is unverified), 'auth' (route there, 401/403), 'notfound'
+    # (404), or 'other' (network/unknown).
     param([string]$BaseUrl, [string]$Key)
     $url = $BaseUrl + 'models'
     try {
@@ -575,7 +591,7 @@ function Test-AzureEndpoint {
         $status = $null
         try { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } } catch { }
         if ($status -eq 404) { return 'notfound' }
-        if ($status -eq 400) { return 'ok' }   # route exists; our probe body/path was just rejected
+        if ($status -eq 400) { return 'reachable' }
         if ($status -eq 401 -or $status -eq 403) { return 'auth' }
         return 'other'
     }
@@ -597,7 +613,6 @@ function Resolve-AzureBaseUrl {
     try { $uri = [System.Uri]$raw } catch { Write-Err "Could not parse the Azure endpoint: $Endpoint" }
     $scheme = $uri.Scheme
     $hostName = $uri.Host
-    $build = { param($h) "{0}://{1}/openai/v1/" -f $scheme, $h }
 
     $candidates = New-Object System.Collections.Generic.List[string]
     if ($hostName -match '^(.*?)\.(services\.ai|openai|cognitiveservices)\.azure\.com$') {
@@ -612,9 +627,13 @@ function Resolve-AzureBaseUrl {
     }
 
     foreach ($h in $candidates) {
-        $candidate = & $build $h
+        $candidate = "{0}://{1}/openai/v1/" -f $scheme, $h
         switch (Test-AzureEndpoint -BaseUrl $candidate -Key $Key) {
             'ok'   { Write-Log "Azure endpoint verified: $candidate"; return $candidate }
+            'reachable' {
+                Write-Log "Azure endpoint reachable, but the probe request was rejected (400): $candidate - verify it in Zap."
+                return $candidate
+            }
             'auth' {
                 Write-Warn "Azure endpoint $candidate is reachable but the key was rejected (401/403). Using it anyway - fix the key/role in the Azure portal."
                 return $candidate
@@ -623,7 +642,7 @@ function Resolve-AzureBaseUrl {
             default    { Write-Warn "Could not verify host '$h' (network/other)."; continue }
         }
     }
-    $fallback = & $build $candidates[0]
+    $fallback = "{0}://{1}/openai/v1/" -f $scheme, $candidates[0]
     Write-Warn "Endpoint probing was inconclusive; writing '$fallback' - verify it in Zap."
     return $fallback
 }
@@ -667,13 +686,20 @@ providers = [
 $end
 "@
 
+    # Back up before rewriting - this path also mutates a settings.toml the
+    # user declined to overwrite in Phase 3, so the timestamped-backup
+    # contract applies here just like in Set-CtrlDHandlers.
     $content = ''
-    if (Test-Path -LiteralPath $SettingsPath) { $content = [System.IO.File]::ReadAllText($SettingsPath) }
+    if (Test-Path -LiteralPath $SettingsPath) {
+        $content = [System.IO.File]::ReadAllText($SettingsPath)
+        Backup-File $SettingsPath
+    }
     $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
     $content = [regex]::Replace($content, $pattern, '',
         [System.Text.RegularExpressions.RegexOptions]::Singleline)
     $content = $content.TrimEnd("`r", "`n")
-    Write-FileUtf8NoBom -Path $SettingsPath -Content ($content + "`r`n`r`n" + $providerBlock + "`r`n")
+    if ($content.Length -gt 0) { $content += "`r`n`r`n" }
+    Write-FileUtf8NoBom -Path $SettingsPath -Content ($content + $providerBlock + "`r`n")
     Write-Log "Injected Azure provider into settings.toml"
 }
 
@@ -715,7 +741,7 @@ function Write-AzureKeyToDpapi {
 }
 
 function Invoke-AzureOptIn {
-    # Returns $true if Azure was configured, else $false.
+    # Returns the resolved Azure base URL when Azure was configured, else $null.
     $envEndpoint = $env:ZAP_AZURE_ENDPOINT
     $envKey      = $env:ZAP_AZURE_API_KEY
     $endpoint = $null; $key = $null
@@ -723,31 +749,30 @@ function Invoke-AzureOptIn {
     if ($envKey) {
         if (-not $envEndpoint) {
             Write-Warn "ZAP_AZURE_API_KEY is set but ZAP_AZURE_ENDPOINT is not - skipping Azure setup."
-            return $false
+            return $null
         }
         $endpoint = $envEndpoint; $key = $envKey
         Write-Log "Using Azure endpoint/key from environment variables."
     }
-    elseif ($script:ZapNoMode) { return $false }
+    elseif ($script:ZapNoMode) { return $null }
     elseif ($script:ZapForceMode) {
         Write-Warn "Force mode without ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY - skipping Azure provider setup."
-        return $false
+        return $null
     }
-    elseif (-not [Environment]::UserInteractive) { return $false }
+    elseif (-not [Environment]::UserInteractive) { return $null }
     else {
-        if (-not (Confirm-YesNo "Pre-configure Azure as the AI provider?" 'N')) { return $false }
-        $endpoint = Read-DialogText -Title 'Azure endpoint' `
+        if (-not (Confirm-YesNo "Pre-configure Azure as the AI provider?" 'N')) { return $null }
+        $endpoint = Show-ZapInputDialog -Title 'Azure endpoint' `
             -Prompt 'Paste your Azure resource endpoint (e.g. https://my-resource.services.ai.azure.com/):'
-        if ([string]::IsNullOrWhiteSpace($endpoint)) { Write-Warn "No endpoint entered - skipping Azure setup."; return $false }
-        $key = Read-DialogSecret -Title 'Azure API key' -Prompt 'Paste your Azure API key:'
-        if ([string]::IsNullOrWhiteSpace($key)) { Write-Warn "No API key entered - skipping Azure setup."; return $false }
+        if ([string]::IsNullOrWhiteSpace($endpoint)) { Write-Warn "No endpoint entered - skipping Azure setup."; return $null }
+        $key = Show-ZapInputDialog -Title 'Azure API key' -Prompt 'Paste your Azure API key:' -Secret
+        if ([string]::IsNullOrWhiteSpace($key)) { Write-Warn "No API key entered - skipping Azure setup."; return $null }
     }
 
     $baseUrl = Resolve-AzureBaseUrl -Endpoint $endpoint -Key $key
     Add-AzureProviderToSettings -SettingsPath (Join-Path $ConfigDir 'settings.toml') -BaseUrl $baseUrl
     Write-AzureKeyToDpapi -Key $key
-    $script:AzureBaseUrl = $baseUrl
-    return $true
+    return $baseUrl
 }
 
 function Add-ClaudeMarketplace {
@@ -788,18 +813,30 @@ function Add-ClaudeMarketplace {
 }
 
 #############################################################################
-# PHASE 0: Self-update (mirror of setup.sh:104-132)
+# PHASE 0: Self-update (mirror of linux/setup.sh Phase 0)
 #############################################################################
 
 Write-Log "Checking for script updates..."
 if (Get-Command git -ErrorAction SilentlyContinue) {
     Push-Location $PSScriptRoot
+    # Windows PowerShell 5.1 turns redirected native stderr into a terminating
+    # NativeCommandError under ErrorActionPreference='Stop' (changed in PS
+    # 7.2+). git writes routine output to stderr - fetch summaries, and the
+    # rev-parse/rev-list failures we expect outside a repo or without an
+    # upstream - so relax EAP around the git block; the $LASTEXITCODE checks
+    # below carry the actual error handling.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         git rev-parse --git-dir 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
             Write-Log "Git repository detected, checking for updates..."
             git fetch origin 2>$null
-            $behind = @(git rev-list 'HEAD..@{u}' 2>$null).Count
+            # --count matches the Linux twin (setup.sh Phase 0); guard the
+            # parse so "no upstream" still means 0.
+            $behindRaw = git rev-list --count 'HEAD..@{u}' 2>$null
+            $behind = 0
+            if ($LASTEXITCODE -eq 0 -and "$behindRaw" -match '^\d+$') { $behind = [int]$behindRaw }
             if ($behind -gt 0) {
                 Write-Log "Updates found! Pulling latest changes..."
                 git pull --ff-only
@@ -815,6 +852,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
             Write-Warn "Not running from a git repository. Self-update disabled."
         }
     } finally {
+        $ErrorActionPreference = $prevEap
         Pop-Location
     }
 } else {
@@ -870,8 +908,7 @@ Set-CtrlDHandlers
 # PHASE 5: Optional Azure provider + DPAPI key write
 #############################################################################
 
-$script:AzureBaseUrl = $null
-$azureConfigured = Invoke-AzureOptIn
+$azureBaseUrl = Invoke-AzureOptIn
 
 #############################################################################
 # PHASE 6: Register the Warp/Zap Claude Code plugin marketplace (if claude present)
@@ -885,8 +922,8 @@ Add-ClaudeMarketplace
 
 Write-Host ''
 Write-Log "Zap setup complete."
-if ($azureConfigured) {
-    $keyStep = "Azure is configured and its API key is already in the DPAPI store ($($script:AzureBaseUrl)) - no UI paste needed."
+if ($azureBaseUrl) {
+    $keyStep = "Azure is configured and its API key is already in the DPAPI store ($azureBaseUrl) - no UI paste needed."
 } else {
     $keyStep = 'No AI provider was configured. Add one via Settings -> AI -> Agent Providers (or re-run and accept the Azure prompt, or set ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY).'
 }
@@ -900,6 +937,5 @@ Next steps:
   4. Restart your PowerShell session (or run: . `$PROFILE) so the Ctrl+D handler
      loads, then press Ctrl+D on an empty prompt to close the pane.
   5. The microsoft-learn and deepwiki MCP servers are registered in
-     $ZapHomeDir\.mcp.json (confirm both appear in the agent panel; if missing,
-     check that `$env:WARP_DATA_PROFILE is unset - it changes the dir Zap reads).
+     $ZapHomeDir\.mcp.json (confirm both appear in the agent panel).
 "@ | Write-Host

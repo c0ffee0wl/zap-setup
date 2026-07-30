@@ -77,7 +77,10 @@ function Confirm-YesNo {
     $suffix = if ($Default -eq 'Y') { '(Y/n)' } else { '(y/N)' }
     $response = Read-Host "$Prompt $suffix"
     if ([string]::IsNullOrWhiteSpace($response)) { $response = $Default }
-    return ($response -match '^[Yy]')
+    # Anchored: only a bare 'y'/'Y' answers Yes, matching prompt_yes_no's
+    # ^[Yy]$ in linux/common.sh (a frozen verbatim lift) - 'yes' means No on
+    # both ports.
+    return ($response -match '^[Yy]$')
 }
 
 #############################################################################

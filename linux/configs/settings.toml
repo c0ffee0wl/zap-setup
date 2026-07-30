@@ -2,7 +2,7 @@
 # or explicit confirmation) overwrite this file.
 #
 # The api_key for any provider lives in the OS keyring, not in this file —
-# paste it via Settings → AI → Agent Providers → LiteLLM (local) → API Key.
+# paste it via Settings → AI → Agent Providers → <the provider below> → API Key.
 
 # Disable in-app auto-update check — the .deb install has no APT repo
 # behind it (postinst skips that on purpose), so the toast can't actually
@@ -169,11 +169,10 @@ providers = [
         reasoning = true,
       },
     ],
-    name = "LiteLLM (local)",
+    name = "LiteLLM",
   },
 ]
 # <<< zap-setup litellm provider <<<
-
 # >>> zap-setup openai provider >>>
 # Public OpenAI provider — the DEFAULT. render_settings keeps EITHER this block
 # OR the litellm block above (never both): the litellm one wins when a LiteLLM
@@ -277,8 +276,6 @@ show_conversation_history = false
 # in app/src/settings/ai.rs (toml_path "agents.byop_compaction.auto").
 [agents.byop_compaction]
 auto = false
-
-[agents.third_party]
 
 # Register Claude Code (and the `blaude` alias) with Zap's third-party CLI
 # agent toolbar — when the running foreground command matches, Zap shows

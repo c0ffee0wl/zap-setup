@@ -39,10 +39,9 @@
 "workspace:new_tab":                               ctrl-t
 "workspace:new_window":                            ctrl-shift-I
 "workspace:close_active_tab":                      none
-# Ctrl+Shift+Q = close window (Terminator's close-window chord). The Linux
-# config uses `ctrl-shift-logo-D`, but `logo` is not a valid Zap modifier, so
-# that binding never parses — and Win-key chords are largely OS-reserved on
-# Windows anyway. Use a plain ctrl-shift chord here.
+# Terminator default close_window = Ctrl+Shift+Q — same chord as the Linux
+# config. (The historical `ctrl-shift-logo-D` never loaded; `logo` is not a
+# valid Zap modifier.)
 "workspace:close_window":                          ctrl-shift-Q
 "workspace:activate_next_tab":                     ctrl-tab
 "workspace:activate_prev_tab":                     ctrl-shift-tab

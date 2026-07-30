@@ -17,7 +17,7 @@ There's also a Windows (PowerShell) installer under `windows/`; see [Windows](#w
 - [Idempotency](#idempotency)
 - [Performance in a VM: enable 3D acceleration](#performance-in-a-vm-enable-3d-acceleration)
 - [Windows](#windows)
-  - [Setup modes](#setup-modes)
+  - [Setup modes](#setup-modes-1)
   - [Layout](#layout)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -36,7 +36,7 @@ Open Zap and you have a working terminal straight away. The AI wiring is optiona
 
 Where it gets good is the built-in LLM integration, and that's really the reason to bother. By default setup pre-configures an agent provider named "OpenAI" aimed at `https://api.openai.com/v1/` with the `gpt-5.6-terra` model over the Responses API, so the agent works the moment you add a key. Need one? Create it at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it once via Settings → AI → Agent Providers → OpenAI → API Key, or export `OPENAI_API_KEY` before running setup and the script stashes it for you. Either way the key lives in the OS keyring (`dev.zap.Zap` / `AgentProviderSecrets`), never in `settings.toml`.
 
-Running a local LiteLLM proxy instead? Setup detects it (the `litellm` CLI on `PATH`, or anything answering on `127.0.0.1:4000`) and wires an agent provider named "LiteLLM (local)" aimed at `http://127.0.0.1:4000/v1/` in place of OpenAI. The key works the same way: paste it via Settings → AI → Agent Providers → LiteLLM (local) → API Key, or export `LITELLM_API_KEY` before running. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup the LiteLLM path is built for.
+Running a local LiteLLM proxy instead? Setup detects it (the `litellm` CLI on `PATH`, or anything answering on `127.0.0.1:4000`) and wires an agent provider named "LiteLLM" aimed at `http://127.0.0.1:4000/v1/` in place of OpenAI. The key works the same way: paste it via Settings → AI → Agent Providers → LiteLLM → API Key, or export `LITELLM_API_KEY` before running. This repo doesn't install or configure LiteLLM itself; the sibling [claude-litellm](https://github.com/c0ffee0wl/claude-litellm) installer does, and running the two together is the setup the LiteLLM path is built for.
 
 ## Setup Modes
 
@@ -55,7 +55,7 @@ Setup installs an **`update-zap`** command to `/usr/local/bin/update-zap`, so yo
 update-zap          # checks GitHub; installs the latest .deb only if it's newer
 ```
 
-It walks the same release filter the installer uses and short-circuits when Zap is already current (printing `zap <version> already installed (latest Zap release)`), so it's safe to run anytime. The `apt` install step needs sudo (you'll be prompted). It touches only the Zap binary and leaves your configs, keybindings, and provider alone. You can also run it straight from the repo as `./linux/update-zap.sh`.
+It walks the same release filter the installer uses and short-circuits with an "already installed" message when the installed Zap is at least as new as the latest release, so it's safe to run anytime. The `apt` install step needs sudo (you'll be prompted). It touches only the Zap binary and leaves your configs, keybindings, and provider alone. You can also run it straight from the repo as `./linux/update-zap.sh`.
 
 The Windows installer ships the same command; see [Windows](#windows).
 
@@ -83,7 +83,7 @@ Zap (GUI terminal) ──► https://api.openai.com/v1/                         
 ## Important Files
 
 - `linux/setup.sh`: phases 0-6 (self-update, apt prereqs, .deb fetch, config render + install incl. mcp.json, optional keyring write, XFCE Super+Q reclaim, optional Claude Code plugin marketplace when `claude` is present)
-- `linux/common.sh`: shared helpers (colors, logging, `backup_file`, `prompt_yes_no`); blocks lifted verbatim from `/opt/linux-setup/linux-setup.sh` and annotated with their upstream line ranges
+- `linux/common.sh`: shared helpers (colors, logging, `backup_file`, `prompt_yes_no`, `apt_get`); blocks lifted verbatim from `/opt/linux-setup/linux-setup.sh` and annotated with their upstream line ranges
 - `linux/configs/settings.toml`: font, theme selector, and two mutually-exclusive provider blocks (OpenAI default + LiteLLM override); `render_settings` strips one based on LiteLLM detection. Uses the `__HOME__` placeholder
 - `linux/configs/keybindings.yaml`: Terminator-parity keybindings
 - `linux/configs/terminator_black_on_white.yaml`: theme payload (must keep `name: Terminator Black on White`)

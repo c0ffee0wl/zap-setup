@@ -92,17 +92,19 @@ if ! grep -qE "(debian|ID_LIKE.*debian)" /etc/os-release 2>/dev/null; then
 fi
 
 # Zap config paths (XDG, matching desktop ID dev.zap.Zap; the Linux project
-# dir name is lowercased to "zap" — see crates/warp_core/src/paths.rs:243-246
-# in the upstream source).
+# dir name is lowercased to "zap" — see the ProjectDirs setup in
+# crates/warp_core/src/paths.rs in the upstream source).
 CONFIG_DIR="$HOME/.config/zap"
 THEMES_DIR="$HOME/.local/share/zap/themes"
 # MCP server defs live in a separate JSON file Zap loads at startup.
 # Path is derived from the build channel in crates/warp_core/src/paths.rs;
-# the OSS channel resolves to `~/.zap/` (NOT `~/.config/zap/`). A non-empty
-# $WARP_DATA_PROFILE shifts the dir to `~/.zap-<profile>/` — warp_home_config_dir_name()
-# appends `-<profile>` whenever ChannelState::data_profile() (env::var("WARP_DATA_PROFILE"))
-# is Some, so mirror that here or the file lands where Zap won't read it.
-ZAP_HOME_DIR="$HOME/.zap${WARP_DATA_PROFILE+-$WARP_DATA_PROFILE}"
+# the OSS channel resolves to `~/.zap/` (NOT `~/.config/zap/`). Deliberately
+# NOT namespaced by $WARP_DATA_PROFILE: ChannelState::data_profile()
+# (crates/warp_core/src/channel/state.rs) reads that env var only under
+# cfg!(debug_assertions), so the release builds this installer fetches always
+# read plain `~/.zap/` — mirroring the var here would write the file where
+# Zap never looks.
+ZAP_HOME_DIR="$HOME/.zap"
 
 # OS-keyring contract — coupled to Zap internals
 # (app/src/ai/agent_providers/secrets.rs). The service name is the app ID
@@ -352,6 +354,13 @@ install_zap_from_github
 # default PATH, so `update-zap` works in new shells immediately.
 install_update_command() {
     local src="$SCRIPT_DIR/update-zap.sh" dst="/usr/local/bin/update-zap"
+    if [ ! -f "$src" ]; then
+        # Optional extra — a missing payload must not abort the run between
+        # the Zap install and the config phases (same warn-and-continue
+        # policy as Phase 6 and the Windows port).
+        warn "update-zap payload not found at $src; skipping the update-zap command install."
+        return 0
+    fi
     if [ -f "$dst" ]; then
         # Default Y: this is our managed command, so a re-run refreshes it. --no
         # preserves an existing copy; --force refreshes it.
@@ -371,21 +380,38 @@ install_update_command
 log "Configuring Zap..."
 mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 
-# Detect LiteLLM to choose which provider render_settings keeps. The default is
-# the public OpenAI provider; a detected LiteLLM proxy overrides it (a local
-# proxy means the user is deliberately routing through their own gateway).
-# Treat LiteLLM as present if the CLI is on PATH OR a proxy answers on its
-# default port 4000 — either signal is enough: the CLI may be installed but not
-# yet started, or the proxy may be up from a venv/Docker/systemd whose CLI isn't
+# Detect LiteLLM to choose the active provider. The default is the public
+# OpenAI provider; a detected LiteLLM proxy overrides it (a local proxy means
+# the user is deliberately routing through their own gateway). Treat LiteLLM
+# as present if the CLI is on PATH OR a proxy answers on its default port
+# 4000 — either signal is enough: the CLI may be installed but not yet
+# started, or the proxy may be up from a venv/Docker/systemd whose CLI isn't
 # on the login PATH. The probe omits -f so any HTTP response (even 401/404)
 # counts as "reachable"; -q comes first to ignore a hostile ~/.curlrc (same
 # rationale as the .deb fetch above). curl is guaranteed by Phase 1.
-LITELLM_DETECTED=false
+#
+# Every provider-specific fact is bound HERE, once: the sentinel token
+# render_settings strips, the keyring provider id + env var + key Phase 4
+# stashes, and the Settings-UI name / endpoint host / caveat the "Next steps"
+# text shows. Everything after this if/else is branch-free on the provider.
 if command -v litellm &> /dev/null \
    || curl -q -s -o /dev/null --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
-    LITELLM_DETECTED=true
+    STRIP_BLOCK="openai"                     # keep the litellm block
+    KEY_PROVIDER_ID="$LITELLM_PROVIDER_ID";  KEY_PROVIDER_LABEL="LiteLLM"
+    KEY_PROVIDER_UI_NAME="LiteLLM"           # providers.name in settings.toml
+    KEY_ENV_NAME="LITELLM_API_KEY";          API_KEY="${LITELLM_API_KEY:-}"
+    VERIFY_HOST="127.0.0.1:4000"
+    VERIFY_NOTE='(requires a LiteLLM proxy listening on the default port 4000,
+     with the Responses route enabled — both out of scope for this installer)'
     log "LiteLLM detected — using the local LiteLLM provider (instead of the default OpenAI)"
 else
+    STRIP_BLOCK="litellm"                    # keep the default openai block
+    KEY_PROVIDER_ID="$OPENAI_PROVIDER_ID";   KEY_PROVIDER_LABEL="OpenAI"
+    KEY_PROVIDER_UI_NAME="OpenAI"            # providers.name in settings.toml
+    KEY_ENV_NAME="OPENAI_API_KEY";           API_KEY="${OPENAI_API_KEY:-}"
+    VERIFY_HOST="api.openai.com"
+    VERIFY_NOTE="(needs a valid OpenAI API key with access to the
+     $OPENAI_MODEL_ID model)"
     log "No local LiteLLM detected — configuring the public OpenAI provider (default)"
 fi
 
@@ -406,21 +432,27 @@ install_with_prompt() {
 
 # settings.toml carries TWO mutually-exclusive provider blocks (litellm + openai)
 # plus a __HOME__ placeholder for the absolute theme path. Exactly one provider
-# survives: the litellm block when a LiteLLM proxy was detected, otherwise the
-# public OpenAI block (the default). We strip the INACTIVE block and substitute
-# __HOME__ in a single sed; cat -s collapses the blank-line pair the range delete
-# leaves at the seam back to a single separator (the payload has no other
-# adjacent blanks). The surviving block's [agents.warp_agent] is the explicit
-# parent for the [agents.warp_agent.*] sub-tables that follow, so the output is
-# valid TOML.
+# survives: render_settings strips the INACTIVE block ($STRIP_BLOCK, bound at
+# detection above) and substitutes __HOME__ in a single sed. The two blocks sit
+# back-to-back in the payload (no blank line between the litellm end sentinel
+# and the openai begin sentinel), so either strip leaves exactly one blank line
+# at the seam. The surviving block's [agents.warp_agent] is the explicit parent
+# for the [agents.warp_agent.*] sub-tables that follow, so the output is valid
+# TOML.
+#
 render_settings() {
-    # LiteLLM detected -> keep litellm (strip openai); otherwise keep the default
-    # openai (strip litellm).
-    local strip
-    if [ "$LITELLM_DETECTED" = true ]; then strip="openai"; else strip="litellm"; fi
-    sed -e "/# >>> zap-setup $strip provider >>>/,/# <<< zap-setup $strip provider <<</d" \
-        -e "s|__HOME__|$HOME|g" | cat -s
+    sed -e "/# >>> zap-setup $STRIP_BLOCK provider >>>/,/# <<< zap-setup $STRIP_BLOCK provider <<</d" \
+        -e "s|__HOME__|$HOME|g"
 }
+
+# A sed range whose sentinel doesn't match is a silent no-op that would leave
+# BOTH provider tables in place — invalid TOML Zap ignores wholesale, under a
+# green "Installed settings" log line. Validate the render up front: exactly
+# one [agents.warp_agent] table line must survive. Checked HERE, at top level,
+# so error() aborts before install_with_prompt prompts, backs up, or writes
+# anything (inside its pipeline, error's message would land in the file).
+[ "$(render_settings < "$SCRIPT_DIR/configs/settings.toml" | grep -cx '\[agents\.warp_agent\]')" = 1 ] \
+    || error "settings.toml render check failed: stripping the '$STRIP_BLOCK' provider block did not leave exactly one [agents.warp_agent] table (sentinel mismatch?)"
 
 install_with_prompt \
     "$SCRIPT_DIR/configs/terminator_black_on_white.yaml" \
@@ -462,30 +494,25 @@ fi
 # we read-merge-write to avoid clobbering keys for other providers the
 # user may have added via the UI.
 #
-# Which key we stash follows the provider render_settings just chose: the
-# LiteLLM proxy key when LiteLLM was detected, otherwise the public OpenAI key.
-# Both are optional — with no env var set the user pastes the key once via the
-# Settings UI instead.
+# Which key we stash follows the provider facts bound at the top of Phase 3
+# (KEY_PROVIDER_ID / KEY_ENV_NAME / API_KEY): the LiteLLM proxy key when
+# LiteLLM was detected, otherwise the public OpenAI key. The env var is
+# optional — with it unset the user pastes the key once via the Settings UI
+# instead.
 KEYRING_OK=false
-if [ "$LITELLM_DETECTED" = true ]; then
-    KEY_PROVIDER_ID="$LITELLM_PROVIDER_ID"; KEY_PROVIDER_LABEL="LiteLLM"
-    KEY_ENV_NAME="LITELLM_API_KEY";          API_KEY="${LITELLM_API_KEY:-}"
-else
-    KEY_PROVIDER_ID="$OPENAI_PROVIDER_ID";   KEY_PROVIDER_LABEL="OpenAI"
-    KEY_ENV_NAME="OPENAI_API_KEY";           API_KEY="${OPENAI_API_KEY:-}"
-fi
 if [ -n "$API_KEY" ]; then
     if ! command -v secret-tool &> /dev/null; then
         warn "$KEY_ENV_NAME set but secret-tool missing — install libsecret-tools to enable keyring write"
     else
         existing=$(secret-tool lookup service "$ZAP_KEYRING_SERVICE" key "$ZAP_KEYRING_KEY" 2>/dev/null || true)
         [ -n "$existing" ] || existing='{}'
-        # If $existing is not valid JSON, jq fails inside this $(...) but
-        # `set -e` does not propagate command-substitution failures (no
-        # `inherit_errexit`), so $merged ends up empty. Guarding below
-        # prevents an empty store call from wiping every other provider's
-        # key under the same service.
-        merged=$(printf '%s' "$existing" | jq --arg id "$KEY_PROVIDER_ID" --arg k "$API_KEY" '. + {($id): $k}')
+        # If $existing is not valid JSON, jq exits non-zero and that status
+        # becomes the assignment's status — without the `|| true`, `set -e`
+        # would kill the whole script right here. Swallow the failure so the
+        # guard below can warn and continue: an empty $merged must never
+        # reach secret-tool, or it would wipe every other provider's key
+        # under the same service.
+        merged=$(printf '%s' "$existing" | jq --arg id "$KEY_PROVIDER_ID" --arg k "$API_KEY" '. + {($id): $k}' 2>/dev/null || true)
         if [ -z "$merged" ]; then
             warn "Refusing to write keyring: jq merge produced empty value (existing keyring entry is likely not valid JSON). Other providers' keys preserved."
         elif printf '%s' "$merged" | secret-tool store \
@@ -530,13 +557,20 @@ if command -v xfconf-query &> /dev/null \
     # defaults the user wants to keep. The <Super>{y,a} probes mirror the
     # cmd-{y,a} Super bindings in configs/keybindings.yaml (add_down / add_right)
     # — keep this list in sync if those Super bindings change. Super_L is the
-    # bare-Super Whisker grab. One lookup each: a non-empty value means the
-    # shortcut is bound. Carry the value alongside the combo (key is pipe-free,
-    # so '|' is a safe field separator) to avoid a second query.
+    # bare-Super Whisker grab, which ships in the *default* scope on
+    # Kali/Xubuntu, so both scopes are probed (custom first, mirroring the
+    # reclaim loop above; first hit wins). Scope and value are carried
+    # alongside the combo (both are pipe-free, so '|' is a safe separator) so
+    # the remediation command targets the right property path.
     found=()
     for combo in '<Super>y' '<Super>a' 'Super_L'; do
-        action=$(xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/$combo" 2>/dev/null || true)
-        [ -n "$action" ] && found+=("$combo|$action")
+        for scope in custom default; do
+            action=$(xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/$scope/$combo" 2>/dev/null || true)
+            if [ -n "$action" ]; then
+                found+=("$scope|$combo|$action")
+                break
+            fi
+        done
     done
 
     if [ ${#found[@]} -gt 0 ]; then
@@ -544,6 +578,7 @@ if command -v xfconf-query &> /dev/null \
         warn "XFCE global shortcuts overlap Zap's keymap — they fire on the desktop"
         warn "and never reach Zap. Remove any you want Zap to own (optional):"
         for entry in "${found[@]}"; do
+            scope=${entry%%|*}; entry=${entry#*|}
             combo=${entry%%|*}; action=${entry#*|}
             if [ "$combo" = "Super_L" ]; then
                 echo "    Super_L  ->  $action   (Whisker menu)"
@@ -552,7 +587,7 @@ if command -v xfconf-query &> /dev/null \
             else
                 echo "    $combo  ->  $action"
             fi
-            echo "      xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/$combo' -r"
+            echo "      xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/$scope/$combo' -r"
         done
         echo "    GUI: Settings -> Keyboard -> Application Shortcuts."
         echo "    (xfconf has no undo — the action shown above is what you'd re-add to restore it.)"
@@ -590,35 +625,22 @@ fi
 echo
 log "Zap setup complete."
 
-# Build the numbered "Next steps" list. There is always a provider now (OpenAI
-# by default, LiteLLM when detected), so the key-paste step (#2) and the AI
-# round-trip verification step (#4) are always present. The keyring-success
-# text reuses the provider facts Phase 4 bound (KEY_PROVIDER_LABEL /
-# KEY_ENV_NAME); only the genuinely provider-specific texts — Settings-UI
-# name, paste wording, verify endpoint — still branch on LITELLM_DETECTED.
+# Build the numbered "Next steps" list from the provider facts bound at the
+# top of Phase 3 (KEY_PROVIDER_UI_NAME / KEY_PROVIDER_LABEL / KEY_ENV_NAME /
+# VERIFY_HOST / VERIFY_NOTE). There is always exactly one provider (OpenAI by
+# default, LiteLLM when detected), so the key-paste step (#2) and the AI
+# round-trip verification step (#4) are always present — and branch-free.
 if [ "$KEYRING_OK" = true ]; then
     KEY_STEP="The $KEY_PROVIDER_LABEL API key is already in the OS keyring — no UI paste needed."
-elif [ "$LITELLM_DETECTED" = true ]; then
-    KEY_STEP="Open Settings -> AI -> Agent Providers -> \"LiteLLM (local)\" -> API Key
-     and paste your LiteLLM master key. (The api_key lives in the OS
-     keyring, not in settings.toml. To skip this step on next install,
+else
+    KEY_STEP="Open Settings -> AI -> Agent Providers -> \"$KEY_PROVIDER_UI_NAME\" -> API
+     Key and paste your $KEY_PROVIDER_LABEL API key. (The api_key lives in the
+     OS keyring, not in settings.toml. To skip this step on next install,
      export $KEY_ENV_NAME before re-running the script.)"
-else
-    KEY_STEP="Open Settings -> AI -> Agent Providers -> \"OpenAI\" -> API Key and
-     paste your OpenAI API key. (The api_key lives in the OS keyring, not
-     in settings.toml. To skip this step on next install, export
-     $KEY_ENV_NAME before re-running the script.)"
 fi
-if [ "$LITELLM_DETECTED" = true ]; then
-    VERIFY_STEP='In a block, type any prompt and check Ctrl-O (block log) shows
-     POST 127.0.0.1:4000/v1/responses -> 200 (requires a LiteLLM proxy
-     listening on the default port 4000, with the Responses route enabled —
-     both out of scope for this installer).'
-else
-    VERIFY_STEP="In a block, type any prompt and check Ctrl-O (block log) shows
-     POST api.openai.com/v1/responses -> 200 (needs a valid OpenAI API key
-     with access to the $OPENAI_MODEL_ID model)."
-fi
+VERIFY_STEP="In a block, type any prompt and check Ctrl-O (block log) shows
+     POST $VERIFY_HOST/v1/responses -> 200
+     $VERIFY_NOTE."
 cat << EOF
 
 Next steps:
@@ -629,7 +651,6 @@ Next steps:
   4. $VERIFY_STEP
   5. The microsoft-learn and deepwiki MCP servers are registered in
      $ZAP_HOME_DIR/.mcp.json. In the agent panel, confirm both appear in
-     the available MCP tools list (if they're missing, check that
-     \$WARP_DATA_PROFILE is unset — it changes the dir Zap reads).
+     the available MCP tools list.
 
 EOF

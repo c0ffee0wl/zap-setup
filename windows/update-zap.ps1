@@ -98,6 +98,24 @@ function Get-InstalledZapVersion {
     return $null
 }
 
+function Test-ZapVersionCurrent {
+    # "Only if newer": mirrors the Linux `dpkg --compare-versions ... ge` so a
+    # retracted or reordered upstream release never silently downgrades a
+    # newer installed build. Both sides are stripped of a leading 'v' (Inno's
+    # DisplayVersion may carry the tag's 'v'; $rel.Version is already de-v'd).
+    # [version] handles the dotted numeric tags Zap publishes; when either
+    # side does not parse, fall back to plain string equality (the pre-compare
+    # behavior). Copied from setup.ps1 - keep in sync.
+    param([string]$Installed, [string]$Latest)
+    $i = $Installed -replace '^[vV]', ''
+    $l = $Latest -replace '^[vV]', ''
+    $iv = $null; $lv = $null
+    if ([version]::TryParse($i, [ref]$iv) -and [version]::TryParse($l, [ref]$lv)) {
+        return ($iv -ge $lv)
+    }
+    return ($i -eq $l)
+}
+
 function Get-ZapInstallDir {
     foreach ($k in $UninstallRegKeys) {
         try {
@@ -144,7 +162,11 @@ function Resolve-LatestZapRelease {
     $headers = @{ 'User-Agent' = 'zap-setup'; 'Accept' = 'application/vnd.github+json' }
     if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $($env:GITHUB_TOKEN)" }
     try {
-        $releases = Invoke-RestMethod -Uri $api -Headers $headers -Method Get
+        # 60s cap mirrors the Linux release query's --max-time 60 so a
+        # blackholed host can't hang an unattended run. The installer
+        # download below stays uncapped: -TimeoutSec is a TOTAL cap and
+        # can't express curl's stall-abort (--speed-limit) semantics.
+        $releases = Invoke-RestMethod -Uri $api -Headers $headers -Method Get -TimeoutSec 60
     } catch {
         Write-Err "Failed to query GitHub releases for $Repo : $($_.Exception.Message)"
     }
@@ -168,10 +190,8 @@ function Update-Zap {
     Write-Log "Latest Zap release: $($rel.Tag)"
 
     $installed = Get-InstalledZapVersion
-    # Inno's DisplayVersion may carry a leading 'v' (the release tag does; the
-    # de-v'd $rel.Version does not), so normalize both sides before comparing.
-    if ($installed -and (($installed -replace '^[vV]', '') -eq ($rel.Version -replace '^[vV]', ''))) {
-        Write-Log "Zap $installed already installed (latest release)"
+    if ($installed -and (Test-ZapVersionCurrent -Installed $installed -Latest $rel.Version)) {
+        Write-Log "Zap $installed already installed (>= latest release $($rel.Version))"
         return
     }
     $was = if ($installed) { $installed } else { 'none' }
@@ -186,9 +206,12 @@ function Update-Zap {
         # 'skipifsilent', so /VERYSILENT still opens Zap. Start without waiting and
         # keep closing the spawned window both WHILE the installer is alive and for
         # a short grace window after it exits (catches a detached launch).
+        # Captured BEFORE launch so the StartTime gate in Close-SpawnedZap can
+        # never race a window the installer spawns (never $proc.StartTime,
+        # which throws on a fast/elevated process under EAP=Stop).
+        $startedAt  = Get-Date
         $proc = Start-Process -FilePath $tmp `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
-        $startedAt  = Get-Date
         $deadline   = (Get-Date).AddMinutes(5)
         $closedPids = @{}
         while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
