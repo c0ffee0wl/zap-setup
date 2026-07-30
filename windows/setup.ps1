@@ -36,9 +36,10 @@ param(
 $ErrorActionPreference = 'Stop'
 # Avoid PS 5.1's painfully slow Invoke-WebRequest progress bar on big downloads.
 $ProgressPreference = 'SilentlyContinue'
-# PowerShell 7.4+ makes a non-zero native exit a terminating error under
-# ErrorActionPreference=Stop. We check $LASTEXITCODE on git ourselves (and
-# expect non-zero for "no upstream"/"not a repo"), so opt out to match 5.1.
+# PowerShell 7.3+ (experimental; stable in 7.4) can make a non-zero native
+# exit a terminating error under ErrorActionPreference=Stop. We check
+# $LASTEXITCODE on git ourselves (and expect non-zero for "no upstream"/"not
+# a repo"), so opt out to match 5.1.
 if (Test-Path 'variable:PSNativeCommandUseErrorActionPreference') {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -48,10 +49,11 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch { }
 
-# Reconstruct the original args so self-update can re-exec with the same
-# flags. Built from the bound parameters (all switches) so a future parameter
-# is forwarded automatically instead of silently dropped on re-exec.
-$OriginalArgs = @($PSBoundParameters.Keys | Where-Object { $PSBoundParameters[$_] } | ForEach-Object { "-$_" })
+# Capture the bound parameters so self-update can re-exec with the same
+# flags by splatting them. Splatting the dictionary (rather than rebuilding
+# '-Name' strings) forwards a future value-taking parameter - not just
+# switches - automatically instead of silently dropping its value on re-exec.
+$OriginalArgs = $PSBoundParameters
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 
@@ -276,8 +278,9 @@ function Close-SpawnedZap {
     # touched. Records closed PIDs in $Seen so the caller can tell whether
     # anything was closed (and we only log each once).
     param([datetime]$After, [hashtable]$Seen)
+    # Get-ZapInstallDir already returns its path TrimEnd('\')-ed.
     $dir = Get-ZapInstallDir
-    $prefix = if ($dir) { $dir.TrimEnd('\') + '\' } else { $null }
+    $prefix = if ($dir) { $dir + '\' } else { $null }
     Get-Process -ErrorAction SilentlyContinue | Where-Object {
         try {
             if ($_.MainWindowHandle -eq [IntPtr]::Zero) { $false }
@@ -448,6 +451,42 @@ function Install-UpdateCommand {
 }
 
 #############################################################################
+# Phase 4/5 helper - regenerate a sentinel-delimited block in place
+#############################################################################
+
+function Set-SentinelBlock {
+    # Shared regenerate-in-place engine for the sentinel-delimited blocks (the
+    # Ctrl+D profile handler and the Azure provider TOML): strip any previous
+    # Begin/End block, trim trailing newlines, and append the new block, so
+    # re-runs replace rather than duplicate. When the file already carries
+    # exactly the resulting content this is a no-op - no timestamped backup,
+    # no write - so unchanged re-runs stop accumulating backups. Returns $true
+    # when the file was (re)written, $false when it was already current.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Begin,
+        [Parameter(Mandatory)][string]$End,
+        [Parameter(Mandatory)][string]$Body
+    )
+    $existing = ''
+    if (Test-Path -LiteralPath $Path) {
+        $existing = [System.IO.File]::ReadAllText($Path)
+    }
+    $pattern = [regex]::Escape($Begin) + '.*?' + [regex]::Escape($End)
+    $stripped = [regex]::Replace($existing, $pattern, '',
+        [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    $stripped = $stripped.TrimEnd("`r", "`n")
+    if ($stripped.Length -gt 0) { $stripped += "`r`n`r`n" }
+    $newContent = $stripped + "$Begin`r`n$Body`r`n$End" + "`r`n"
+    if ($newContent -ceq $existing) { return $false }
+    # Timestamped-backup contract: this may be mutating a file the user owns
+    # (a curated profile, or a settings.toml declined in Phase 3).
+    Backup-File $Path
+    Write-FileUtf8NoBom -Path $Path -Content $newContent
+    return $true
+}
+
+#############################################################################
 # Phase 4 helper - bash-style Ctrl+D handler in the PowerShell profiles
 #############################################################################
 
@@ -475,8 +514,6 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     }
 }
 '@
-    $block = "$begin`r`n$body`r`n$end"
-
     # Documents may be redirected (e.g. OneDrive); GetFolderPath honors that.
     $docs = [Environment]::GetFolderPath('MyDocuments')
     $targets = @()
@@ -488,19 +525,11 @@ if (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue) {
     }
 
     foreach ($profilePath in $targets) {
-        $existing = ''
-        if (Test-Path -LiteralPath $profilePath) {
-            $existing = [System.IO.File]::ReadAllText($profilePath)
-            Backup-File $profilePath
+        if (Set-SentinelBlock -Path $profilePath -Begin $begin -End $end -Body $body) {
+            Write-Log "Configured Ctrl+D handler in: $profilePath"
+        } else {
+            Write-Log "Ctrl+D handler already configured in: $profilePath"
         }
-        # Strip any previous zap-setup block (inclusive) so re-runs replace it.
-        $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-        $existing = [regex]::Replace($existing, $pattern, '',
-            [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        $existing = $existing.TrimEnd("`r", "`n")
-        if ($existing.Length -gt 0) { $existing += "`r`n`r`n" }
-        Write-FileUtf8NoBom -Path $profilePath -Content ($existing + $block + "`r`n")
-        Write-Log "Configured Ctrl+D handler in: $profilePath"
     }
 }
 
@@ -648,6 +677,8 @@ function Resolve-AzureBaseUrl {
 }
 
 function Add-AzureProviderToSettings {
+    # Returns $true when the provider block is in place (written now or
+    # already current), $false when the injection had to be skipped.
     param([string]$SettingsPath, [string]$BaseUrl)
     $begin = '# >>> zap-setup azure provider >>>'
     $end   = '# <<< zap-setup azure provider <<<'
@@ -659,8 +690,7 @@ function Add-AzureProviderToSettings {
     #
     # The model fields are identical to both provider blocks in
     # linux/configs/settings.toml (the reference copy) - bump them together.
-    $providerBlock = @"
-$begin
+    $body = @"
 [agents.warp_agent]
 providers = [
   {
@@ -683,24 +713,32 @@ providers = [
     name = "Azure",
   },
 ]
-$end
 "@
 
-    # Back up before rewriting - this path also mutates a settings.toml the
-    # user declined to overwrite in Phase 3, so the timestamped-backup
-    # contract applies here just like in Set-CtrlDHandlers.
-    $content = ''
+    # Duplicate-table guard (the Windows analogue of the Linux post-render
+    # [agents.warp_agent] count check): if the settings.toml we are appending
+    # to already defines an explicit [agents.warp_agent] table OUTSIDE our own
+    # sentinel block - e.g. the user kept a Phase 3 file where Zap serialized
+    # a UI-added provider - appending a second one is a TOML duplicate-table
+    # error and Zap would ignore the WHOLE file under a green log line. Azure
+    # is optional, so warn-and-skip rather than abort.
     if (Test-Path -LiteralPath $SettingsPath) {
-        $content = [System.IO.File]::ReadAllText($SettingsPath)
-        Backup-File $SettingsPath
+        $existing = [System.IO.File]::ReadAllText($SettingsPath)
+        $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
+        $outside = [regex]::Replace($existing, $pattern, '',
+            [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if ($outside -match '(?m)^\s*\[agents\.warp_agent\]\s*$') {
+            Write-Warn "settings.toml already defines an [agents.warp_agent] table; skipping the Azure provider injection (add the provider via Settings -> AI -> Agent Providers instead)."
+            return $false
+        }
     }
-    $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-    $content = [regex]::Replace($content, $pattern, '',
-        [System.Text.RegularExpressions.RegexOptions]::Singleline)
-    $content = $content.TrimEnd("`r", "`n")
-    if ($content.Length -gt 0) { $content += "`r`n`r`n" }
-    Write-FileUtf8NoBom -Path $SettingsPath -Content ($content + $providerBlock + "`r`n")
-    Write-Log "Injected Azure provider into settings.toml"
+
+    if (Set-SentinelBlock -Path $SettingsPath -Begin $begin -End $end -Body $body) {
+        Write-Log "Injected Azure provider into settings.toml"
+    } else {
+        Write-Log "Azure provider block already present in settings.toml"
+    }
+    return $true
 }
 
 function Write-AzureKeyToDpapi {
@@ -742,25 +780,30 @@ function Write-AzureKeyToDpapi {
 
 function Invoke-AzureOptIn {
     # Returns the resolved Azure base URL when Azure was configured, else $null.
+    # -No is checked FIRST so an auto-No run never mutates settings.toml or the
+    # DPAPI secrets file, even with ZAP_AZURE_* exported (README: -No skips the
+    # Azure step and preserves existing config).
+    if ($script:ZapNoMode) { return $null }
+
     $envEndpoint = $env:ZAP_AZURE_ENDPOINT
     $envKey      = $env:ZAP_AZURE_API_KEY
     $endpoint = $null; $key = $null
 
-    if ($envKey) {
-        if (-not $envEndpoint) {
-            Write-Warn "ZAP_AZURE_API_KEY is set but ZAP_AZURE_ENDPOINT is not - skipping Azure setup."
-            return $null
-        }
+    if ($envEndpoint -and $envKey) {
         $endpoint = $envEndpoint; $key = $envKey
         Write-Log "Using Azure endpoint/key from environment variables."
     }
-    elseif ($script:ZapNoMode) { return $null }
-    elseif ($script:ZapForceMode) {
-        Write-Warn "Force mode without ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY - skipping Azure provider setup."
-        return $null
-    }
-    elseif (-not [Environment]::UserInteractive) { return $null }
     else {
+        # Symmetric warn: either half-set combination is called out (endpoint
+        # without key used to fall through silently and re-ask for both).
+        if ($envEndpoint -or $envKey) {
+            Write-Warn "Only one of ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY is set - both are required to preconfigure Azure without prompts."
+        }
+        if ($script:ZapForceMode) {
+            Write-Warn "Force mode without ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY - skipping Azure provider setup."
+            return $null
+        }
+        if (-not [Environment]::UserInteractive) { return $null }
         if (-not (Confirm-YesNo "Pre-configure Azure as the AI provider?" 'N')) { return $null }
         $endpoint = Show-ZapInputDialog -Title 'Azure endpoint' `
             -Prompt 'Paste your Azure resource endpoint (e.g. https://my-resource.services.ai.azure.com/):'
@@ -770,7 +813,10 @@ function Invoke-AzureOptIn {
     }
 
     $baseUrl = Resolve-AzureBaseUrl -Endpoint $endpoint -Key $key
-    Add-AzureProviderToSettings -SettingsPath (Join-Path $ConfigDir 'settings.toml') -BaseUrl $baseUrl
+    if (-not (Add-AzureProviderToSettings -SettingsPath (Join-Path $ConfigDir 'settings.toml') -BaseUrl $baseUrl)) {
+        # No provider block written -> a DPAPI key for it would be dead state.
+        return $null
+    }
     Write-AzureKeyToDpapi -Key $key
     return $baseUrl
 }
@@ -939,3 +985,9 @@ Next steps:
   5. The microsoft-learn and deepwiki MCP servers are registered in
      $ZapHomeDir\.mcp.json (confirm both appear in the agent panel).
 "@ | Write-Host
+
+# Explicit success exit. Without it the script's exit status is whatever the
+# last native command left in $LASTEXITCODE (e.g. a deliberately-swallowed
+# Phase 6 claude failure), and the Phase 0 re-exec would propagate that stale
+# non-zero code from a fully successful run.
+exit 0

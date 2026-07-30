@@ -291,7 +291,7 @@ install_zap_from_github() {
     [ "$(dpkg --print-architecture)" = "$arch" ] || error "Zap publishes only amd64 .deb (got: $(dpkg --print-architecture))"
 
     log "Resolving latest Zap release on github.com/${repo}..."
-    local meta tag url latest_ver installed_ver tmp
+    local meta tag url latest_ver installed_ver
     # Match claude-litellm's hardened curl (linux/common.sh:42,82): -q (must come
     # first) makes curl ignore the user's ~/.curlrc — security distros like REMnux
     # ship one that forces a malformed IE11 UA + extra headers, tripping
@@ -318,7 +318,7 @@ install_zap_from_github() {
              | "\($r.tag_name) \(.browser_download_url)"][0] // ""')
     [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
 
-    latest_ver="${tag#v}"
+    latest_ver="${tag#[vV]}"   # strip either tag case, like the Windows port's '^[vV]'
     # Status-aware version read: a removed-but-config-remains package still
     # reports a Version, which would wrongly skip the (re)install below.
     installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
@@ -335,8 +335,12 @@ install_zap_from_github() {
     fi
 
     log "Installing $pkg $latest_ver (was: ${installed_ver:-none})"
+    # tmp is deliberately NOT local: a set -e abort (e.g. a failed download)
+    # exits the shell without running RETURN traps, and by the time the EXIT
+    # trap runs a `local` is already out of scope — so cleanup hooks BOTH:
+    # RETURN for the normal path, EXIT (which needs the global) for aborts.
     tmp=$(mktemp --suffix=.deb)
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "$tmp"' RETURN EXIT
     curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
     # mktemp creates 0600; relax so the _apt sandbox user can read the file
     # (otherwise apt falls back to unsandboxed root fetch and prints a notice).
@@ -453,6 +457,15 @@ render_settings() {
 # anything (inside its pipeline, error's message would land in the file).
 [ "$(render_settings < "$SCRIPT_DIR/configs/settings.toml" | grep -cx '\[agents\.warp_agent\]')" = 1 ] \
     || error "settings.toml render check failed: stripping the '$STRIP_BLOCK' provider block did not leave exactly one [agents.warp_agent] table (sentinel mismatch?)"
+
+# Same loud-abort discipline for the model id: OPENAI_MODEL_ID is a hand-synced
+# copy of models.id in the openai provider block (bump them together — see its
+# declaration above). Only checkable when the openai block is the survivor; the
+# litellm block deliberately carries the proxy-prefixed id instead.
+if [ "$STRIP_BLOCK" = "litellm" ]; then
+    render_settings < "$SCRIPT_DIR/configs/settings.toml" | grep -qF "id = \"$OPENAI_MODEL_ID\"," \
+        || error "settings.toml render check failed: model id '$OPENAI_MODEL_ID' (OPENAI_MODEL_ID) not found in the rendered openai provider block — the constant drifted from configs/settings.toml"
+fi
 
 install_with_prompt \
     "$SCRIPT_DIR/configs/terminator_black_on_white.yaml" \

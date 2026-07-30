@@ -93,16 +93,19 @@ update_zap_from_github() {
     local repo="zerx-lab/zap"
     local pkg="zap"
     local arch="amd64"
-    [ "$(dpkg --print-architecture)" = "$arch" ] || error "Zap publishes only amd64 .deb (got: $(dpkg --print-architecture))"
 
     # Defensive: setup.sh installs these, but the standalone command may run on a
-    # system where they were removed.
-    for tool in curl jq dpkg-query; do
+    # system where they were removed. Checked BEFORE the first dpkg use (the
+    # arch check below) so a missing tool gets this diagnostic, not a garbled
+    # command-not-found message.
+    for tool in curl jq dpkg dpkg-query; do
         command -v "$tool" &> /dev/null || error "Required tool '$tool' not found (install curl, jq and dpkg)."
     done
 
+    [ "$(dpkg --print-architecture)" = "$arch" ] || error "Zap publishes only amd64 .deb (got: $(dpkg --print-architecture))"
+
     log "Resolving latest Zap release on github.com/${repo}..."
-    local meta tag url latest_ver installed_ver tmp
+    local meta tag url latest_ver installed_ver
     # Hardened curl: -q (first) ignores a hostile ~/.curlrc; -A presents a modern
     # browser UA so UA-filtering CDNs don't 403. Bounded timeouts: hard cap on
     # the API fetch (safe because --compressed shrinks its release JSON ~11x),
@@ -123,7 +126,7 @@ update_zap_from_github() {
              | "\($r.tag_name) \(.browser_download_url)"][0] // ""')
     [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
 
-    latest_ver="${tag#v}"
+    latest_ver="${tag#[vV]}"   # strip either tag case, like the Windows port's '^[vV]'
     # Status-aware version read: a removed-but-config-remains package still
     # reports a Version, which would wrongly skip the (re)install below.
     installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
@@ -140,8 +143,12 @@ update_zap_from_github() {
     fi
 
     log "Updating $pkg $latest_ver (was: ${installed_ver:-none})"
+    # tmp is deliberately NOT local: a set -e abort (e.g. a failed download)
+    # exits the shell without running RETURN traps, and by the time the EXIT
+    # trap runs a `local` is already out of scope — so cleanup hooks BOTH:
+    # RETURN for the normal path, EXIT (which needs the global) for aborts.
     tmp=$(mktemp --suffix=.deb)
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "$tmp"' RETURN EXIT
     curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
     # mktemp creates 0600; relax so the _apt sandbox user can read the file.
     chmod 0644 "$tmp"

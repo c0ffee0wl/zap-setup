@@ -136,8 +136,9 @@ function Close-SpawnedZap {
     # Zap detached). Matches a process with a visible main window that started
     # AFTER $After and is either named like 'zap' OR lives under the install dir.
     param([datetime]$After, [hashtable]$Seen)
+    # Get-ZapInstallDir already returns its path TrimEnd('\')-ed.
     $dir = Get-ZapInstallDir
-    $prefix = if ($dir) { $dir.TrimEnd('\') + '\' } else { $null }
+    $prefix = if ($dir) { $dir + '\' } else { $null }
     Get-Process -ErrorAction SilentlyContinue | Where-Object {
         try {
             if ($_.MainWindowHandle -eq [IntPtr]::Zero) { $false }
