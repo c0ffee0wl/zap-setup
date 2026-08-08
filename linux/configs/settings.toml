@@ -352,3 +352,15 @@ open_file_editor = "zap"
 # app/src/settings/editor.rs (toml_path "text_editing.autocomplete_symbols").
 [text_editing]
 autocomplete_symbols = false
+
+# Warpify SSH sessions, but never offer to install Zap's SSH extension on
+# hosts that lack it. enable_ssh_warpification matches Zap's default (true);
+# set explicitly to document the intent. ssh_extension_install_mode defaults
+# to "always_ask" (a per-connect "Install Zap's SSH extension?" choice
+# block); "never_install" suppresses that prompt. The extension only adds
+# remote agent features (file browsing, code review) — plain warpification
+# (blocks, input editor, completions) is unaffected. Keys + defaults verified
+# in app/src/terminal/warpify/settings.rs (toml_path "warpify.ssh.*").
+[warpify.ssh]
+enable_ssh_warpification   = true
+ssh_extension_install_mode = "never_install"
