@@ -454,6 +454,22 @@ function Install-UpdateCommand {
 # Phase 4/5 helper - regenerate a sentinel-delimited block in place
 #############################################################################
 
+function Remove-SentinelBlock {
+    # Strip a Begin/End sentinel block from Content and return the remainder.
+    # This is the ONE copy of the strip idiom: Set-SentinelBlock regenerates
+    # with it, and the duplicate-table guard in Add-AzureProviderToSettings
+    # classifies "our block vs. foreign [agents.warp_agent]" with it - the two
+    # must agree on what counts as our block, so never fork this regex.
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [Parameter(Mandatory)][string]$Begin,
+        [Parameter(Mandatory)][string]$End
+    )
+    $pattern = [regex]::Escape($Begin) + '.*?' + [regex]::Escape($End)
+    return [regex]::Replace($Content, $pattern, '',
+        [System.Text.RegularExpressions.RegexOptions]::Singleline)
+}
+
 function Set-SentinelBlock {
     # Shared regenerate-in-place engine for the sentinel-delimited blocks (the
     # Ctrl+D profile handler and the Azure provider TOML): strip any previous
@@ -472,9 +488,7 @@ function Set-SentinelBlock {
     if (Test-Path -LiteralPath $Path) {
         $existing = [System.IO.File]::ReadAllText($Path)
     }
-    $pattern = [regex]::Escape($Begin) + '.*?' + [regex]::Escape($End)
-    $stripped = [regex]::Replace($existing, $pattern, '',
-        [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    $stripped = Remove-SentinelBlock -Content $existing -Begin $Begin -End $End
     $stripped = $stripped.TrimEnd("`r", "`n")
     if ($stripped.Length -gt 0) { $stripped += "`r`n`r`n" }
     $newContent = $stripped + "$Begin`r`n$Body`r`n$End" + "`r`n"
@@ -677,8 +691,12 @@ function Resolve-AzureBaseUrl {
 }
 
 function Add-AzureProviderToSettings {
-    # Returns $true when the provider block is in place (written now or
-    # already current), $false when the injection had to be skipped.
+    # Returns 'ok' when the provider block is in place (written now or already
+    # current), 'skipped-azure-present' when the injection was skipped but the
+    # kept file already defines OUR provider id (so a DPAPI key write still
+    # lands on a provider that reads it - that path is how a rotated key
+    # reaches the store), and 'skipped' when a foreign [agents.warp_agent]
+    # table blocks the injection and no azure provider exists to consume a key.
     param([string]$SettingsPath, [string]$BaseUrl)
     $begin = '# >>> zap-setup azure provider >>>'
     $end   = '# <<< zap-setup azure provider <<<'
@@ -724,12 +742,23 @@ providers = [
     # is optional, so warn-and-skip rather than abort.
     if (Test-Path -LiteralPath $SettingsPath) {
         $existing = [System.IO.File]::ReadAllText($SettingsPath)
-        $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
-        $outside = [regex]::Replace($existing, $pattern, '',
-            [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        $outside = Remove-SentinelBlock -Content $existing -Begin $begin -End $end
         if ($outside -match '(?m)^\s*\[agents\.warp_agent\]\s*$') {
-            Write-Warn "settings.toml already defines an [agents.warp_agent] table; skipping the Azure provider injection (add the provider via Settings -> AI -> Agent Providers instead)."
-            return $false
+            if ($outside -cne $existing) {
+                # A stale zap-setup block ALONGSIDE the foreign table means the
+                # duplicate is already on disk - Zap is discarding the whole
+                # file right now. Strip our block so settings.toml parses
+                # again before bailing out of the injection.
+                Backup-File $SettingsPath
+                Write-FileUtf8NoBom -Path $SettingsPath -Content ($outside.TrimEnd("`r", "`n") + "`r`n")
+                Write-Warn "Removed the stale zap-setup azure block from settings.toml; it duplicated the [agents.warp_agent] table defined outside it, which makes Zap reject the whole file."
+            }
+            if ($outside -match ('id\s*=\s*"' + [regex]::Escape($AzureProviderId) + '"')) {
+                Write-Warn "settings.toml already defines the '$AzureProviderId' provider outside the zap-setup markers; skipping the injection."
+                return 'skipped-azure-present'
+            }
+            Write-Warn "settings.toml already defines an [agents.warp_agent] table; skipping the Azure provider injection."
+            return 'skipped'
         }
     }
 
@@ -738,7 +767,7 @@ providers = [
     } else {
         Write-Log "Azure provider block already present in settings.toml"
     }
-    return $true
+    return 'ok'
 }
 
 function Write-AzureKeyToDpapi {
@@ -779,7 +808,10 @@ function Write-AzureKeyToDpapi {
 }
 
 function Invoke-AzureOptIn {
-    # Returns the resolved Azure base URL when Azure was configured, else $null.
+    # Returns $null when no Azure setup was attempted, else a hashtable with
+    # one of: BaseUrl (the provider was injected and the key stored) or Note
+    # (the duplicate-table guard skipped the injection; the closing banner
+    # prints the note verbatim).
     # -No is checked FIRST so an auto-No run never mutates settings.toml or the
     # DPAPI secrets file, even with ZAP_AZURE_* exported (README: -No skips the
     # Azure step and preserves existing config).
@@ -813,12 +845,18 @@ function Invoke-AzureOptIn {
     }
 
     $baseUrl = Resolve-AzureBaseUrl -Endpoint $endpoint -Key $key
-    if (-not (Add-AzureProviderToSettings -SettingsPath (Join-Path $ConfigDir 'settings.toml') -BaseUrl $baseUrl)) {
-        # No provider block written -> a DPAPI key for it would be dead state.
-        return $null
+    $outcome = Add-AzureProviderToSettings -SettingsPath (Join-Path $ConfigDir 'settings.toml') -BaseUrl $baseUrl
+    if ($outcome -eq 'skipped') {
+        # No azure provider exists to consume the key - storing it would be
+        # dead state.
+        return @{ Note = 'Azure setup was skipped: settings.toml already defines its own [agents.warp_agent] table, so the provider was NOT injected and the key was NOT stored. Add both via Settings -> AI -> Agent Providers.' }
     }
+    # 'ok' and 'skipped-azure-present' both store the key - the latter is how
+    # a rotated key reaches the DPAPI store when the kept file already defines
+    # the azure provider.
     Write-AzureKeyToDpapi -Key $key
-    return $baseUrl
+    if ($outcome -eq 'ok') { return @{ BaseUrl = $baseUrl } }
+    return @{ Note = 'Your settings.toml already defines the Azure provider, so only the API key was (re)written to the DPAPI store - no UI paste needed.' }
 }
 
 function Add-ClaudeMarketplace {
@@ -954,7 +992,7 @@ Set-CtrlDHandlers
 # PHASE 5: Optional Azure provider + DPAPI key write
 #############################################################################
 
-$azureBaseUrl = Invoke-AzureOptIn
+$azure = Invoke-AzureOptIn
 
 #############################################################################
 # PHASE 6: Register the Warp/Zap Claude Code plugin marketplace (if claude present)
@@ -968,8 +1006,11 @@ Add-ClaudeMarketplace
 
 Write-Host ''
 Write-Log "Zap setup complete."
-if ($azureBaseUrl) {
-    $keyStep = "Azure is configured and its API key is already in the DPAPI store ($azureBaseUrl) - no UI paste needed."
+if ($azure.BaseUrl) {
+    $keyStep = "Azure is configured and its API key is already in the DPAPI store ($($azure.BaseUrl)) - no UI paste needed."
+} elseif ($azure.Note) {
+    # Guard-skip outcome; the generic advice below would just skip again.
+    $keyStep = $azure.Note
 } else {
     $keyStep = 'No AI provider was configured. Add one via Settings -> AI -> Agent Providers (or re-run and accept the Azure prompt, or set ZAP_AZURE_ENDPOINT/ZAP_AZURE_API_KEY).'
 }

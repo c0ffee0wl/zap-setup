@@ -128,6 +128,8 @@ cd $env:USERPROFILE\zap-setup
 
 If you accept the Azure prompt, paste your resource endpoint (e.g. `https://<resource>.services.ai.azure.com/`) and API key. Any of the Azure endpoint forms work: Foundry (`services.ai`), `openai`, or `cognitiveservices`. The script normalizes what you paste to the OpenAI-compatible v1 base URL (`…/openai/v1/`), prefers the Foundry host, and checks it with your key before writing anything. It then writes the provider (`gpt-5.6-terra` over the Responses API) into `settings.toml` and stores the key in Zap's DPAPI secrets file, so no Settings-UI paste is needed. Decline, and Zap starts with no provider configured.
 
+One exception: if you kept a `settings.toml` that already defines its own `[agents.warp_agent]` provider table, the script skips the injection rather than append a duplicate table Zap would reject. When that kept file already contains the `azure` provider, your key is still stored (so re-running is how a rotated key gets in); otherwise nothing is written and the closing summary tells you to add the provider and key via Settings → AI → Agent Providers.
+
 ### Setup modes
 
 | Command | What happens |

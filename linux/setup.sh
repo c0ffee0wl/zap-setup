@@ -396,14 +396,19 @@ mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 #
 # Every provider-specific fact is bound HERE, once: the sentinel token
 # render_settings strips, the keyring provider id + env var + key Phase 4
-# stashes, and the Settings-UI name / endpoint host / caveat the "Next steps"
-# text shows. Everything after this if/else is branch-free on the provider.
+# stashes, the models.id the post-render drift check must find in the
+# surviving block, and the Settings-UI name / endpoint host / caveat the
+# "Next steps" text shows. Everything after this if/else is branch-free on
+# the provider.
 if command -v litellm &> /dev/null \
    || curl -q -s -o /dev/null --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
     STRIP_BLOCK="openai"                     # keep the litellm block
     KEY_PROVIDER_ID="$LITELLM_PROVIDER_ID";  KEY_PROVIDER_LABEL="LiteLLM"
     KEY_PROVIDER_UI_NAME="LiteLLM"           # providers.name in settings.toml
     KEY_ENV_NAME="LITELLM_API_KEY";          API_KEY="${LITELLM_API_KEY:-}"
+    # Same model as the openai block, behind the proxy's azure/ routing prefix
+    # (deliberate — see the litellm block's comment in configs/settings.toml).
+    EXPECT_MODEL_ID="azure/$OPENAI_MODEL_ID"
     VERIFY_HOST="127.0.0.1:4000"
     VERIFY_NOTE='(requires a LiteLLM proxy listening on the default port 4000,
      with the Responses route enabled — both out of scope for this installer)'
@@ -413,6 +418,7 @@ else
     KEY_PROVIDER_ID="$OPENAI_PROVIDER_ID";   KEY_PROVIDER_LABEL="OpenAI"
     KEY_PROVIDER_UI_NAME="OpenAI"            # providers.name in settings.toml
     KEY_ENV_NAME="OPENAI_API_KEY";           API_KEY="${OPENAI_API_KEY:-}"
+    EXPECT_MODEL_ID="$OPENAI_MODEL_ID"
     VERIFY_HOST="api.openai.com"
     VERIFY_NOTE="(needs a valid OpenAI API key with access to the
      $OPENAI_MODEL_ID model)"
@@ -451,21 +457,18 @@ render_settings() {
 
 # A sed range whose sentinel doesn't match is a silent no-op that would leave
 # BOTH provider tables in place — invalid TOML Zap ignores wholesale, under a
-# green "Installed settings" log line. Validate the render up front: exactly
-# one [agents.warp_agent] table line must survive. Checked HERE, at top level,
-# so error() aborts before install_with_prompt prompts, backs up, or writes
-# anything (inside its pipeline, error's message would land in the file).
-[ "$(render_settings < "$SCRIPT_DIR/configs/settings.toml" | grep -cx '\[agents\.warp_agent\]')" = 1 ] \
+# green "Installed settings" log line. Validate the render up front, against
+# one captured render: exactly one [agents.warp_agent] table line must
+# survive, and it must carry the models.id bound at detection above (from the
+# hand-synced OPENAI_MODEL_ID constant — a drifted constant aborts here, on
+# both provider branches). Checked HERE, at top level, so error() aborts
+# before install_with_prompt prompts, backs up, or writes anything (inside
+# its pipeline, error's message would land in the file).
+RENDERED_SETTINGS=$(render_settings < "$SCRIPT_DIR/configs/settings.toml")
+[ "$(grep -cx '\[agents\.warp_agent\]' <<<"$RENDERED_SETTINGS")" = 1 ] \
     || error "settings.toml render check failed: stripping the '$STRIP_BLOCK' provider block did not leave exactly one [agents.warp_agent] table (sentinel mismatch?)"
-
-# Same loud-abort discipline for the model id: OPENAI_MODEL_ID is a hand-synced
-# copy of models.id in the openai provider block (bump them together — see its
-# declaration above). Only checkable when the openai block is the survivor; the
-# litellm block deliberately carries the proxy-prefixed id instead.
-if [ "$STRIP_BLOCK" = "litellm" ]; then
-    render_settings < "$SCRIPT_DIR/configs/settings.toml" | grep -qF "id = \"$OPENAI_MODEL_ID\"," \
-        || error "settings.toml render check failed: model id '$OPENAI_MODEL_ID' (OPENAI_MODEL_ID) not found in the rendered openai provider block — the constant drifted from configs/settings.toml"
-fi
+[ "$(grep -cF "id = \"$EXPECT_MODEL_ID\"," <<<"$RENDERED_SETTINGS")" = 1 ] \
+    || error "settings.toml render check failed: model id '$EXPECT_MODEL_ID' not found exactly once in the rendered provider block — the OPENAI_MODEL_ID constant drifted from configs/settings.toml (bump the constant and the provider blocks together)"
 
 install_with_prompt \
     "$SCRIPT_DIR/configs/terminator_black_on_white.yaml" \
