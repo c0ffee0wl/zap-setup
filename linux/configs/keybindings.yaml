@@ -81,10 +81,13 @@
 # Window
 "root_view:toggle_fullscreen":                     f11
 "workspace:hide_warp":                             ctrl-shift-alt-A
-# Left panel (Warp Drive: sessions / agents / files). Zap ships this action
-# UNBOUND — the title-bar "Search sessions, agents, files..." click is the only
-# built-in way in — so bind it to match the live host config. ctrl-shift-> is
-# German-QWERTZ-reachable: `>` is Shift on the <>| key left of Z. (NB: Zap's
+# Left panel (Warp Drive: sessions / agents / files). Zap's default here is
+# ctrl-shift-| (the action carries CustomAction::ToggleWarpDrive, whose Linux
+# keystroke is ctrl-shift-|), which a German layout cannot produce — `|` is
+# AltGr on the <>| key — so rebind it to match the live host config, leaving
+# the title-bar "Search sessions, agents, files..." click as the only other way
+# in. ctrl-shift-> is German-QWERTZ-reachable: `>` is Shift on that same <>|
+# key left of Z. (NB: Zap's
 # default also maps ctrl-shift-> to terminal:ask_ai_assistant_last_block, but
 # that binding is gated off when Agent Mode is enabled, so no clash in practice.)
 "workspace:toggle_left_panel":                     ctrl-shift->
