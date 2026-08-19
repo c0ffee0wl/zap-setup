@@ -82,7 +82,7 @@ Zap (GUI terminal) ──► https://api.openai.com/v1/                         
 
 ## Important Files
 
-- `linux/setup.sh`: phases 0-6 (self-update, apt prereqs, .deb fetch, config render + install incl. mcp.json, optional keyring write, XFCE Super+Q reclaim, optional Claude Code plugin marketplace when `claude` is present)
+- `linux/setup.sh`: phases 0-6 (self-update, apt prereqs + GPU preflight, .deb fetch, config render + install incl. mcp.json, optional keyring write, XFCE Super+Q reclaim, optional Claude Code plugin marketplace when `claude` is present)
 - `linux/common.sh`: shared helpers (colors, logging, `backup_file`, `prompt_yes_no`, `apt_get`); blocks lifted verbatim from `/opt/linux-setup/linux-setup.sh` and annotated with their upstream line ranges
 - `linux/configs/settings.toml`: font, theme selector, and two mutually-exclusive provider blocks (OpenAI default + LiteLLM override); `render_settings` strips one based on LiteLLM detection. Uses the `__HOME__` placeholder
 - `linux/configs/keybindings.yaml`: Terminator-parity keybindings
@@ -110,7 +110,13 @@ The fix is to give the guest a real paravirtual GPU. On VMware Workstation Pro w
 
 The Windows host also needs a current GPU driver and DirectX; `dxdiag` on the host will confirm both. VMware maps the guest's OpenGL onto the host GPU through that.
 
-To check it worked, run `glxinfo | grep "OpenGL renderer"` in the guest. An accelerated guest reports an `SVGA3D` renderer; if you still see `llvmpipe`, the setting didn't take.
+To check it worked, run `glxinfo -B | grep "OpenGL renderer"` in the guest. The renderer string is the only signal worth reading, and there are three ways to misread it:
+
+- An accelerated VMware guest reports `SVGA3D; build: RELEASE;  LLVM;`. That trailing `LLVM` is the driver's shader compiler, not software rendering. Only the whole token `llvmpipe` means the setting didn't take — the software rasterizer puts its name at the front of the string.
+- Ignore the `Accelerated: yes/no` line `glxinfo -B` prints a few lines above. VMware's host-backed SVGA3D driver reports `Accelerated: no` while 3D is working perfectly, so it flags every working guest.
+- Don't cross-check with `vulkaninfo`. VMware gives the guest no Vulkan driver at all, so even a fully accelerated guest shows only `lavapipe` there. That costs you nothing: Zap ranks an accelerated OpenGL adapter above software Vulkan on its own, without being told to.
+
+`setup.sh` runs this same check in Phase 1 and warns when it finds a software rasterizer, so re-running the installer after the host change is the quickest recheck.
 
 When 3D acceleration genuinely isn't available, Zap still starts. Pin a backend so it stops hunting for one: `WGPU_BACKEND=gl zap` (Zap passes `WGPU_BACKEND` straight through to `wgpu`). Rendering stays in software, but it's stable.
 

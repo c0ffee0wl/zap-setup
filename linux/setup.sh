@@ -262,7 +262,7 @@ check_gpu_acceleration() {
         none)
             echo "    No virtual machine detected — a real GPU should not fall back to llvmpipe."
             echo "    Your GPU driver / Mesa is likely missing or misconfigured; install the"
-            echo "    vendor driver (or mesa for Intel/AMD) and recheck with: glxinfo | grep renderer"
+            echo "    vendor driver (or mesa for Intel/AMD)."
             ;;
         *)
             echo "    If this is a VMware or VirtualBox VM, enable 3D in its display settings:"
@@ -272,6 +272,11 @@ check_gpu_acceleration() {
             ;;
     esac
 
+    echo
+    echo "    To recheck, re-run this script, or run: glxinfo -B | grep 'OpenGL renderer'"
+    echo "    Trust only that string: on VMware an accelerated guest reads"
+    echo "    'SVGA3D; build: RELEASE;  LLVM;' (that 'LLVM' is the shader compiler, not"
+    echo "    llvmpipe), while the 'Accelerated:' line above it still reports 'no'."
     echo
     echo "    If acceleration truly isn't available, pin a backend so Zap stops hunting:"
     echo "      WGPU_BACKEND=gl zap"
