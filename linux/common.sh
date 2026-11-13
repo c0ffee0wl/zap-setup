@@ -147,7 +147,11 @@ apt_get() {
             fi
         fi
         opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-        "${APT_SUDO_PREFIX[@]}" apt-get "${opts[@]}" "$@"
+        # stdin closed: under a bare `sudo` (whitelist sudoers) env_reset drops
+        # DEBIAN_FRONTEND/NEEDRESTART_MODE, and a debconf or needrestart dialog
+        # on a still-attached terminal would wait forever. Without a tty on stdin
+        # both fall back to non-interactive defaults; -y covers apt's own prompt.
+        "${APT_SUDO_PREFIX[@]}" apt-get "${opts[@]}" "$@" </dev/null
     else
         sudo apt-get "${opts[@]}" "$@"
     fi
