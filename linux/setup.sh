@@ -21,6 +21,10 @@ set -eo pipefail
 # (adapted from linux-setup.sh:8-13)
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
+# git over HTTPS must never block an unattended run: no credential prompt on
+# /dev/tty, and abort a transfer stuck under 1 KB/s for 30s (git's low-speed
+# limit is off by default, so a stalled socket otherwise waits forever).
+export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
@@ -132,19 +136,24 @@ cd "$SCRIPT_DIR"
 if git rev-parse --git-dir > /dev/null 2>&1; then
     log "Git repository detected, checking for updates..."
 
-    # Fetch latest changes
-    git fetch origin 2>/dev/null || true
+    # Fetch latest changes — bounded and non-fatal (no fetch = no self-update)
+    timeout -k 10 120 git fetch origin 2>/dev/null || true
 
     # Count commits we don't have that remote has
     BEHIND=$(git rev-list --count HEAD..@{u} 2>/dev/null) || BEHIND=0
 
     if [ "$BEHIND" -gt 0 ]; then
-        log "Updates found! Pulling latest changes..."
-        git pull --ff-only
-        log "Re-executing updated script..."
-        # Re-exec via $SCRIPT_DIR (absolute) rather than $0 so resolution
-        # is independent of the user's invocation cwd and any future `cd`.
-        exec "$SCRIPT_DIR/setup.sh" "${ORIGINAL_ARGS[@]}" || error "Failed to re-execute updated script"
+        log "Updates found! Fast-forwarding to them..."
+        # Merge what the fetch already downloaded (no second network round-trip)
+        # and never abort over it: a diverged or dirty checkout keeps running
+        # the current version.
+        if git merge --ff-only @{u}; then
+            log "Re-executing updated script..."
+            # Re-exec via $SCRIPT_DIR (absolute) rather than $0 so resolution
+            # is independent of the user's invocation cwd and any future `cd`.
+            exec "$SCRIPT_DIR/setup.sh" "${ORIGINAL_ARGS[@]}" || error "Failed to re-execute updated script"
+        fi
+        warn "Self-update could not fast-forward (local changes or diverged history) — continuing with the current version"
     else
         log "Script is up to date"
     fi
@@ -356,12 +365,22 @@ install_zap_from_github() {
     # RETURN for the normal path, EXIT (which needs the global) for aborts.
     tmp=$(mktemp --suffix=.deb)
     trap 'rm -f "$tmp"' RETURN EXIT
-    curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"
+    # An upgrade that fails to download or install keeps the installed Zap and
+    # lets the config phases, keyring stash and plugin step still run — like
+    # the release lookup above; only a box with no Zap yet treats it as fatal.
+    if ! curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --speed-limit 1024 --speed-time 30 -fSL --progress-bar -A "$ua" -o "$tmp" "$url"; then
+        [ -n "$installed_ver" ] || error "Zap download failed and $pkg is not installed yet — re-run later"
+        warn "Zap $latest_ver download failed — keeping the installed $pkg $installed_ver (re-run later to update)"
+        return 0
+    fi
     # mktemp creates 0600; relax so the _apt sandbox user can read the file
     # (otherwise apt falls back to unsandboxed root fetch and prints a notice).
     chmod 0644 "$tmp"
-    apt_update_once
-    apt_get install -y "$tmp"
+    apt_update_once || warn "apt index refresh failed — installing the downloaded .deb anyway"
+    if ! apt_get install -y "$tmp"; then
+        [ -n "$installed_ver" ] || error "Zap install failed and $pkg is not installed yet"
+        warn "Zap $latest_ver install failed — keeping the installed $pkg $installed_ver"
+    fi
 }
 
 install_zap_from_github
@@ -651,8 +670,13 @@ fi
 # probing) and a timeout with SIGKILL escalation, bounded above claude's own
 # 120s git-clone timeout so a slow first clone is not cut off.
 claude_cli() {
-    local secs="$1"; shift
-    timeout -k 15 "$secs" claude "$@" </dev/null 2>&1
+    local secs="$1" out rc=0; shift
+    # Via a file, not a pipe: $(...) on claude's own stdout waits for EOF until
+    # every holder exits, so a descendant left behind would hang us past timeout.
+    out="$(mktemp)"
+    timeout -k 15 "$secs" claude "$@" </dev/null >"$out" 2>&1 || rc=$?
+    cat "$out"; rm -f "$out"
+    return "$rc"
 }
 # Last line of a claude_cli capture — claude's one-line verdict — minus the CR
 # its CRLF output carries.

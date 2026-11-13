@@ -116,6 +116,10 @@ Zap loads MCP server definitions from `~/.zap/.mcp.json` at startup and re-reads
 - Each server has exactly one of `command` (stdio) or `url` (HTTP/SSE) — validated in `app/src/ai/agent_sdk/mcp_config.rs`.
 - **Do not bundle MCPs that require auth headers.** Zap has no keyring slot for MCP headers, so a token in `headers.Authorization` would land in a world-readable JSON file. Servers like GitHub/Linear/Sentry stay user-added, not bundled.
 
+### Unattended runs (the ct-* overlays)
+
+Nothing may block or abort a run on a transient failure: `GIT_TERMINAL_PROMPT=0` + `GIT_HTTP_LOW_SPEED_*` are exported at the top, the self-update fetch is bounded and its fast-forward (`git merge --ff-only @{u}`, no second network round-trip) only warns when it cannot apply, and a failed Zap release lookup, download or install keeps an installed Zap and continues — only a box with no Zap yet treats those as fatal.
+
 ### Phase 6 — Claude Code plugin marketplace (graceful-fail is load-bearing)
 
 The final phase of both installers registers the Warp/Zap Claude Code plugin when the `claude` CLI is on `PATH`: `claude plugin marketplace add warpdotdev/claude-code-warp` followed by `claude plugin install warp@claude-code-warp --scope user`, `claude plugin marketplace update claude-code-warp` and `claude plugin update warp@claude-code-warp --scope user` (that repo is a marketplace named `claude-code-warp` whose one plugin is `warp`). Zap is a Warp OSS fork, so this is the integration that wires Claude Code into the terminal.
