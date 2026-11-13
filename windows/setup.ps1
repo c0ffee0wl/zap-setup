@@ -311,9 +311,12 @@ function Resolve-LatestZapRelease {
         # can't express curl's stall-abort (--speed-limit) semantics.
         $releases = Invoke-RestMethod -Uri $api -Headers $headers -Method Get -TimeoutSec 60
     } catch {
-        Write-Err "Failed to query GitHub releases for $Repo : $($_.Exception.Message)"
+        # Not fatal here: Install-Zap decides — an installed Zap is kept (the
+        # Linux rule), only a box with no Zap yet treats this as fatal.
+        Write-Warn "Failed to query GitHub releases for $Repo : $($_.Exception.Message)"
+        return $null
     }
-    foreach ($r in $releases) {
+    foreach ($r in @($releases)) {
         if ($r.draft -or $r.prerelease) { continue }
         $asset = $r.assets | Where-Object { $_.name -match $AssetRegex } | Select-Object -First 1
         if ($asset) {
@@ -328,11 +331,17 @@ function Resolve-LatestZapRelease {
 }
 
 function Install-Zap {
+    $installed = Get-InstalledZapVersion
     $rel = Resolve-LatestZapRelease
-    if (-not $rel) { Write-Err "No ZapSetup.exe asset found in recent releases of github.com/$Repo" }
+    if (-not $rel) {
+        if ($installed) {
+            Write-Warn "No usable Zap release found on github.com/$Repo - keeping the installed Zap $installed (re-run later to update)."
+            return
+        }
+        Write-Err "No ZapSetup.exe asset found in recent releases of github.com/$Repo and Zap is not installed yet - re-run later."
+    }
     Write-Log "Latest Zap release: $($rel.Tag)"
 
-    $installed = Get-InstalledZapVersion
     if ($installed -and (Test-ZapVersionCurrent -Installed $installed -Latest $rel.Version)) {
         Write-Log "Zap $installed already installed (>= latest release $($rel.Version))"
         return
@@ -343,7 +352,15 @@ function Install-Zap {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("ZapSetup-{0}.exe" -f ([guid]::NewGuid().ToString('N')))
     try {
         Write-Log "Downloading $($rel.Url)"
-        Invoke-WebRequest -Uri $rel.Url -OutFile $tmp -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $rel.Url -OutFile $tmp -UseBasicParsing
+        } catch {
+            if ($installed) {
+                Write-Warn "Zap $($rel.Version) download failed ($($_.Exception.Message)) - keeping the installed Zap $installed."
+                return
+            }
+            Write-Err "Zap download failed and Zap is not installed yet: $($_.Exception.Message)"
+        }
         Write-Log "Running silent install (per-user, no admin needed)..."
         # Zap's Inno [Run] entry launches the app on completion WITHOUT the
         # 'skipifsilent' flag, so /VERYSILENT still opens Zap. A plain -Wait
@@ -386,13 +403,20 @@ function Install-Zap {
         # The uninstall key is authoritative: [Run] is the last phase, so a
         # registered version means success even if force-closing the spawned Zap
         # (or ending the installer above) made the process report a non-zero code.
+        # It must carry the NEW version: on an upgrade the key already exists
+        # with the old one, so mere presence proves nothing.
         $exit = $null
         try { if ($proc.HasExited) { $exit = $proc.ExitCode } } catch { }
-        if (-not (Get-InstalledZapVersion)) {
-            $detail = if ($null -ne $exit) { "exit code $exit" } else { "no exit code available" }
+        $detail = if ($null -ne $exit) { "exit code $exit" } else { "no exit code available" }
+        $now = Get-InstalledZapVersion
+        if (-not $now) {
             Write-Err "Zap did not register an install ($detail)."
         }
-        Write-Log "Zap installed."
+        if (-not (Test-ZapVersionCurrent -Installed $now -Latest $rel.Version)) {
+            Write-Warn "Zap installer finished but the registered version is still $now, not $($rel.Version) ($detail) - keeping it; re-run to retry."
+            return
+        }
+        Write-Log "Zap $now installed."
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
@@ -416,19 +440,23 @@ function Install-UpdateCommand {
     $cmdDst = Join-Path $binDir 'update-zap.cmd'
     $ps1Dst = Join-Path $binDir 'update-zap.ps1'
 
-    $doCopy = $true
-    if ((Test-Path -LiteralPath $cmdDst) -or (Test-Path -LiteralPath $ps1Dst)) {
-        # Default Y: this is our managed command, so a re-run refreshes it. -No
-        # preserves an existing copy; -Force refreshes it.
-        $doCopy = Confirm-YesNo "Refresh the update-zap command in $binDir?" 'Y'
+    # Managed command: refreshed whenever it differs from the repo copy, with
+    # no prompt — like the Linux path. A prompt here meant -No (the overlays'
+    # unattended mode) kept the first-ever copy forever.
+    $same = $true
+    foreach ($pair in @(@($cmdSrc, $cmdDst), @($ps1Src, $ps1Dst))) {
+        if (-not (Test-Path -LiteralPath $pair[1]) -or
+            (Get-FileHash -LiteralPath $pair[0]).Hash -ne (Get-FileHash -LiteralPath $pair[1]).Hash) {
+            $same = $false
+        }
     }
-    if ($doCopy) {
+    if ($same) {
+        Write-Log "update-zap command in $binDir is current"
+    } else {
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
         Copy-Item -LiteralPath $cmdSrc -Destination $cmdDst -Force
         Copy-Item -LiteralPath $ps1Src -Destination $ps1Dst -Force
         Write-Log "Installed update-zap command: $cmdDst (run: update-zap)"
-    } else {
-        Write-Log "Keeping existing update-zap command in $binDir"
     }
 
     # Idempotently add the bin dir to the User PATH (no admin needed). Compare
@@ -720,10 +748,10 @@ providers = [
       {
         audio = false,
         context_window = 1050000,
-        id = "gpt-5.6-terra",
+        id = "gpt-6.1-terra",
         image = true,
         max_output_tokens = 128000,
-        name = "GPT-5.6 Terra",
+        name = "GPT-6.1 Terra",
         pdf = true,
         reasoning = true,
       },
@@ -930,6 +958,11 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
         git rev-parse --git-dir 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) {
             Write-Log "Git repository detected, checking for updates..."
+            # Same non-interactive, stall-bounded git as the Linux twin: no
+            # credential prompt, and a transfer below 1 KB/s for 30s aborts.
+            $env:GIT_TERMINAL_PROMPT = '0'
+            $env:GIT_HTTP_LOW_SPEED_LIMIT = '1024'
+            $env:GIT_HTTP_LOW_SPEED_TIME = '30'
             git fetch origin 2>$null
             # --count matches the Linux twin (setup.sh Phase 0); guard the
             # parse so "no upstream" still means 0.
@@ -937,13 +970,19 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
             $behind = 0
             if ($LASTEXITCODE -eq 0 -and "$behindRaw" -match '^\d+$') { $behind = [int]$behindRaw }
             if ($behind -gt 0) {
-                Write-Log "Updates found! Pulling latest changes..."
-                git pull --ff-only
-                # Don't re-exec on a failed pull - that would loop (still behind).
-                if ($LASTEXITCODE -ne 0) { Write-Err "git pull --ff-only failed; resolve manually and re-run." }
-                Write-Log "Re-executing updated script..."
-                & $PSCommandPath @OriginalArgs
-                exit $LASTEXITCODE
+                Write-Log "Updates found! Fast-forwarding to them..."
+                # Merge what the fetch above already downloaded (no second
+                # network trip). A merge that cannot fast-forward (local edits,
+                # diverged history) only warns and the run continues on the
+                # current version - the Linux rule; re-exec only on success, so
+                # a failure can't loop.
+                git merge --ff-only '@{u}'
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log "Re-executing updated script..."
+                    & $PSCommandPath @OriginalArgs
+                    exit $LASTEXITCODE
+                }
+                Write-Warn "Self-update could not fast-forward (local changes or diverged history) - continuing with the current version"
             } else {
                 Write-Log "Script is up to date"
             }

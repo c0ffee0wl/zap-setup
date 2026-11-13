@@ -119,7 +119,7 @@ ZAP_KEYRING_SERVICE="dev.zap.Zap"
 ZAP_KEYRING_KEY="AgentProviderSecrets"
 LITELLM_PROVIDER_ID="litellm-local"   # must match providers.id in the litellm block of settings.toml
 OPENAI_PROVIDER_ID="openai"           # must match providers.id in the openai block of settings.toml
-OPENAI_MODEL_ID="gpt-5.6-terra"       # must match models.id in the openai block of settings.toml
+OPENAI_MODEL_ID="gpt-6.1-terra"       # must match models.id in the openai block of settings.toml
 
 #############################################################################
 # PHASE 0: Self-Update (adapted from linux-setup.sh:873-898 — see inline note)
@@ -223,7 +223,11 @@ check_gpu_acceleration() {
     fi
 
     local renderer
-    renderer=$(glxinfo -B 2>/dev/null | sed -n 's/.*OpenGL renderer string: //p' | head -n1)
+    # `|| true`: with no reachable display glxinfo exits 255, and under
+    # pipefail the bare assignment would end the whole run silently (headless
+    # VMs, SSH, the ct-* overlays' sudo invocation) instead of reaching the
+    # warning below.
+    renderer=$(glxinfo -B 2>/dev/null | sed -n 's/.*OpenGL renderer string: //p' | head -n1) || true
     if [ -z "$renderer" ]; then
         warn "Could not read the OpenGL renderer (no X/Wayland display reachable?); skipping the 3D-acceleration check."
         return 0
@@ -306,7 +310,7 @@ install_zap_from_github() {
 
     log "Resolving latest Zap release on github.com/${repo}..."
     local meta tag url latest_ver installed_ver
-    # Match claude-litellm's hardened curl (linux/common.sh:42,82): -q (must come
+    # Match claude-litellm's hardened curl (curl_secure, linux/common.sh): -q (must come
     # first) makes curl ignore the user's ~/.curlrc — security distros like REMnux
     # ship one that forces a malformed IE11 UA + extra headers, tripping
     # Cloudflare's bot challenge (403) — and -A presents a modern browser UA, since
@@ -342,13 +346,24 @@ install_zap_from_github() {
     # one-off hand-published release or a future re-introduced parallel
     # release line can't trip the installer. Single jq pass returns tag+url
     # from the SAME release record so they can't drift.
+    # `|| true` + the emptiness check below: a body that is not the expected
+    # release list (a proxy's block page, an error object, `assets: null`)
+    # must take the same keep-the-installed-Zap path as a failed request,
+    # not end the run under set -e with no message.
+    tag=""; url=""
     read -r tag url < <(printf '%s' "$meta" | jq -r --arg pkg "$pkg" '
         [.[] | select(.draft|not) | select(.prerelease|not)
              | . as $r
-             | .assets[]
+             | (.assets // [])[]
              | select(.name | test("^" + $pkg + "_.*_amd64\\.deb$"))
-             | "\($r.tag_name) \(.browser_download_url)"][0] // ""')
-    [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
+             | "\($r.tag_name) \(.browser_download_url)"][0] // ""' 2>/dev/null) || true
+    if [ -z "$url" ]; then
+        if [ -n "$installed_ver" ]; then
+            warn "No usable zap .deb in the GitHub release listing — keeping the installed $pkg $installed_ver (re-run later to update)"
+            return 0
+        fi
+        error "No zap-branded .deb found in recent releases and $pkg is not installed yet"
+    fi
 
     latest_ver="${tag#[vV]}"   # strip either tag case, like the Windows port's '^[vV]'
     # "Only if newer": >= (not string equality) so a retracted or reordered
@@ -436,7 +451,7 @@ mkdir -p "$CONFIG_DIR" "$THEMES_DIR" "$ZAP_HOME_DIR"
 # "Next steps" text shows. Everything after this if/else is branch-free on
 # the provider.
 if command -v litellm &> /dev/null \
-   || curl -q -s -o /dev/null --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
+   || curl -q -s -o /dev/null --noproxy '*' --connect-timeout 2 --max-time 3 "http://127.0.0.1:4000/" 2>/dev/null; then
     STRIP_BLOCK="openai"                     # keep the litellm block
     KEY_PROVIDER_ID="$LITELLM_PROVIDER_ID";  KEY_PROVIDER_LABEL="LiteLLM"
     KEY_PROVIDER_UI_NAME="LiteLLM"           # providers.name in settings.toml
@@ -461,7 +476,7 @@ else
 fi
 
 install_with_prompt() {
-    local src=$1 dst=$2 label=$3 transform=${4:-cat}
+    local src=$1 dst=$2 label=$3
 
     if [ -f "$dst" ]; then
         if prompt_yes_no "Overwrite existing $label at $dst?" "N"; then
@@ -471,7 +486,7 @@ install_with_prompt() {
             return 0
         fi
     fi
-    "$transform" < "$src" | install -m 0644 /dev/stdin "$dst"
+    install -m 0644 "$src" "$dst"
     log "Installed $label: $dst"
 }
 
@@ -497,8 +512,7 @@ render_settings() {
 # survive, and it must carry the models.id bound at detection above (from the
 # hand-synced OPENAI_MODEL_ID constant — a drifted constant aborts here, on
 # both provider branches). Checked HERE, at top level, so error() aborts
-# before install_with_prompt prompts, backs up, or writes anything (inside
-# its pipeline, error's message would land in the file).
+# before install_with_prompt prompts, backs up, or writes anything.
 RENDERED_SETTINGS=$(render_settings < "$SCRIPT_DIR/configs/settings.toml")
 [ "$(grep -cx '\[agents\.warp_agent\]' <<<"$RENDERED_SETTINGS")" = 1 ] \
     || error "settings.toml render check failed: stripping the '$STRIP_BLOCK' provider block did not leave exactly one [agents.warp_agent] table (sentinel mismatch?)"
@@ -515,11 +529,12 @@ install_with_prompt \
     "$CONFIG_DIR/keybindings.yaml" \
     "keybindings"
 
+# The validated render itself, so what was checked above is byte-for-byte what
+# lands (no second render that could differ).
 install_with_prompt \
-    "$SCRIPT_DIR/configs/settings.toml" \
+    <(printf '%s\n' "$RENDERED_SETTINGS") \
     "$CONFIG_DIR/settings.toml" \
-    "settings (font + theme + provider)" \
-    render_settings
+    "settings (font + theme + provider)"
 
 # MCP servers — auth-free URL-based endpoints only. Zap watches this file
 # (app/src/ai/mcp/file_mcp_watcher.rs) and picks up changes without a restart.
@@ -555,7 +570,23 @@ if [ -n "$API_KEY" ]; then
     if ! command -v secret-tool &> /dev/null; then
         warn "$KEY_ENV_NAME set but secret-tool missing — install libsecret-tools to enable keyring write"
     else
-        existing=$(secret-tool lookup service "$ZAP_KEYRING_SERVICE" key "$ZAP_KEYRING_KEY" 2>/dev/null || true)
+        # A missing entry and a FAILED lookup (unlock prompt dismissed, D-Bus
+        # error) both exit non-zero, but only the failure says anything on
+        # stderr. Treating a failure as "no entry" would merge into {} and the
+        # store below would wipe every other provider's key — so a lookup that
+        # complained skips the write instead. Bounded: an unlock/create-keyring
+        # dialog nobody answers must not wedge an unattended run.
+        keyring_err=$(mktemp)
+        lookup_rc=0
+        existing=$(timeout -k 5 120 secret-tool lookup service "$ZAP_KEYRING_SERVICE" key "$ZAP_KEYRING_KEY" 2>"$keyring_err") || lookup_rc=$?
+        if [ "$lookup_rc" -ne 0 ] && [ -s "$keyring_err" ]; then
+            warn "Could not read the OS keyring ($(head -n1 "$keyring_err")) — not writing, so other providers' keys stay intact. Paste the key via Settings instead."
+            existing=""; API_KEY=""
+        elif [ "$lookup_rc" -eq 124 ] || [ "$lookup_rc" -eq 137 ]; then
+            warn "OS keyring lookup timed out (locked keyring waiting for an unlock prompt?) — not writing. Paste the key via Settings instead."
+            existing=""; API_KEY=""
+        fi
+        rm -f "$keyring_err"
         [ -n "$existing" ] || existing='{}'
         # If $existing is not valid JSON, jq exits non-zero and that status
         # becomes the assignment's status — without the `|| true`, `set -e`
@@ -567,9 +598,11 @@ if [ -n "$API_KEY" ]; then
         # argv is world-readable in /proc/<pid>/cmdline, environ is owner-only —
         # the ct-* overlays hand it to us via sudo --preserve-env for that reason.
         merged=$(printf '%s' "$existing" | ZAP_K="$API_KEY" jq --arg id "$KEY_PROVIDER_ID" '. + {($id): env.ZAP_K}' 2>/dev/null || true)
-        if [ -z "$merged" ]; then
+        if [ -z "$API_KEY" ]; then
+            :   # lookup failed above; already warned
+        elif [ -z "$merged" ]; then
             warn "Refusing to write keyring: jq merge produced empty value (existing keyring entry is likely not valid JSON). Other providers' keys preserved."
-        elif printf '%s' "$merged" | secret-tool store \
+        elif printf '%s' "$merged" | timeout -k 5 120 secret-tool store \
                 --label="Zap: $ZAP_KEYRING_KEY" \
                 service "$ZAP_KEYRING_SERVICE" \
                 key "$ZAP_KEYRING_KEY"; then

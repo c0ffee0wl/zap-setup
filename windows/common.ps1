@@ -49,7 +49,12 @@ function Backup-File {
     param([Parameter(Mandatory)][string]$Path)
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
         $backup = "{0}.backup.{1}" -f $Path, (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
-        Copy-Item -LiteralPath $Path -Destination $backup -Force
+        # Never overwrite an earlier backup taken in the same second (two
+        # writes of one file in a run would otherwise replace the user's
+        # original with our own first write).
+        $n = 1
+        while (Test-Path -LiteralPath $backup) { $backup = "{0}.backup.{1}.{2}" -f $Path, (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'), $n; $n++ }
+        Copy-Item -LiteralPath $Path -Destination $backup
         Write-Log "Backed up to: $backup"
     }
 }
