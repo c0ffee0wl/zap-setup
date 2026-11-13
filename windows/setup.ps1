@@ -869,8 +869,9 @@ function Add-ClaudeMarketplace {
     # native non-zero exit into a terminating error under
     # ErrorActionPreference='Stop', hence the try/catch + $LASTEXITCODE check -
     # the same 5.1-safe idiom Phase 0 uses). Re-running is safe: 'marketplace
-    # add' replaces the same-named entry and 'install' is a no-op when the
-    # plugin is already installed.
+    # add' reports "already on disk" and 'install' is a no-op when the plugin is
+    # already installed - neither advances anything, which is why an explicit
+    # 'marketplace update' + 'plugin update' follow. Both no-op when current.
     if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { return }
     Write-Log "Detected claude CLI - registering the claude-code-warp plugin marketplace"
 
@@ -886,13 +887,27 @@ function Add-ClaudeMarketplace {
 
     $pluginInstalled = $false
     try {
-        & claude plugin install warp@claude-code-warp
+        & claude plugin install warp@claude-code-warp --scope user
         if ($LASTEXITCODE -eq 0) { $pluginInstalled = $true }
     } catch { }
-    if ($pluginInstalled) {
-        Write-Log "Installed the warp plugin (warp@claude-code-warp)"
-    } else {
+    if (-not $pluginInstalled) {
         Write-Warn "Added the marketplace but installing warp@claude-code-warp failed - install it later with /plugin"
+        return
+    }
+
+    # A repeat 'marketplace add' leaves the catalog as-is, so refresh it before
+    # 'plugin update' or the update never sees a newer version (non-fatal).
+    try { & claude plugin marketplace update claude-code-warp } catch { }
+
+    $pluginUpdated = $false
+    try {
+        & claude plugin update warp@claude-code-warp --scope user
+        if ($LASTEXITCODE -eq 0) { $pluginUpdated = $true }
+    } catch { }
+    if ($pluginUpdated) {
+        Write-Log "warp plugin (warp@claude-code-warp) installed and up to date"
+    } else {
+        Write-Warn "warp plugin installed, but 'claude plugin update warp@claude-code-warp --scope user' failed"
     }
 }
 

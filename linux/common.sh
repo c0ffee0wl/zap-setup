@@ -128,12 +128,27 @@ prompt_yes_no() {
 # DPkg::Lock::Timeout makes apt wait for
 # the lock instead of aborting when a boot-time apt job (cloud-init,
 # apt-daily, unattended-upgrades) still holds it - the classic cloud-init race.
+#
+# A command-WHITELIST sudoers (the ct-* overlays grant NOPASSWD on
+# /usr/bin/apt-get but deliberately not /usr/bin/env — env would make the
+# grant root-for-anything) refuses the env form and drops to a password
+# prompt mid-run. So when sudo -n -l says apt-get is runnable but env is not,
+# use the bare form: the dpkg conffile options still keep it non-interactive;
+# only the debconf frontend / needrestart hints are lost.
+APT_SUDO_PREFIX=()   # resolved once per run by apt_get (the probes can't change mid-run)
 apt_get() {
+    local opts=(-o DPkg::Lock::Timeout=300)
     if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
-        sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
-            -o DPkg::Lock::Timeout=300 \
-            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+        if [ ${#APT_SUDO_PREFIX[@]} -eq 0 ]; then
+            if ! sudo -n -l env >/dev/null 2>&1 && sudo -n -l apt-get >/dev/null 2>&1; then
+                APT_SUDO_PREFIX=(sudo)
+            else
+                APT_SUDO_PREFIX=(sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a)
+            fi
+        fi
+        opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+        "${APT_SUDO_PREFIX[@]}" apt-get "${opts[@]}" "$@"
     else
-        sudo apt-get -o DPkg::Lock::Timeout=300 "$@"
+        sudo apt-get "${opts[@]}" "$@"
     fi
 }

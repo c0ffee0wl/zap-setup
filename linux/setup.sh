@@ -308,7 +308,25 @@ install_zap_from_github() {
     # a stall-abort (<1 KB/s for 30s) instead of a hard cap so a slow but
     # progressing download is never killed.
     local ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
-    meta=$(curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --compressed -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30")
+    # Status-aware version read: a removed-but-config-remains package still
+    # reports a Version, which would wrongly skip the (re)install below.
+    installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
+    if [ "${installed_ver%% *}" = "installed" ]; then
+        installed_ver="${installed_ver#* }"
+    else
+        installed_ver=""
+    fi
+    # A failed lookup (GitHub's 60/h unauthenticated rate limit behind a shared
+    # NAT, a network blip) must not abort the whole run under `set -e` — the
+    # config phases and the keyring stash below don't depend on it. Fatal only
+    # when nothing is installed yet (there is no Zap to configure).
+    if ! meta=$(curl -q --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --compressed -fsSL -A "$ua" "https://api.github.com/repos/${repo}/releases?per_page=30"); then
+        if [ -n "$installed_ver" ]; then
+            warn "Could not query Zap releases on GitHub — keeping the installed $pkg $installed_ver (re-run later to update)"
+            return 0
+        fi
+        error "Could not query Zap releases on GitHub (rate limit or network) and $pkg is not installed yet — re-run later"
+    fi
 
     # Walk releases newest-first and pick the first one publishing a
     # zap_*_amd64.deb asset. We prefer this over /releases/latest so that a
@@ -324,14 +342,6 @@ install_zap_from_github() {
     [ -n "$url" ] || error "No zap-branded .deb found in recent releases"
 
     latest_ver="${tag#[vV]}"   # strip either tag case, like the Windows port's '^[vV]'
-    # Status-aware version read: a removed-but-config-remains package still
-    # reports a Version, which would wrongly skip the (re)install below.
-    installed_ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)
-    if [ "${installed_ver%% *}" = "installed" ]; then
-        installed_ver="${installed_ver#* }"
-    else
-        installed_ver=""
-    fi
     # "Only if newer": >= (not string equality) so a retracted or reordered
     # upstream release can't silently downgrade a newer installed build.
     if [ -n "$installed_ver" ] && dpkg --compare-versions "$installed_ver" ge "$latest_ver"; then
@@ -370,11 +380,12 @@ install_update_command() {
         warn "update-zap payload not found at $src; skipping the update-zap command install."
         return 0
     fi
-    if [ -f "$dst" ]; then
-        # Default Y: this is our managed command, so a re-run refreshes it. --no
-        # preserves an existing copy; --force refreshes it.
-        prompt_yes_no "Refresh the update-zap command at $dst?" "Y" \
-            || { log "Keeping existing $dst"; return 0; }
+    # Our managed command, not user config: refresh it whenever the payload
+    # changed, no prompt. (It used to prompt "Default Y" — but --no, the mode
+    # the ct-* overlays run in, answers No to every prompt, so those boxes kept
+    # their first copy forever, missing every later release-walk/curl fix.)
+    if cmp -s "$src" "$dst"; then
+        return 0
     fi
     sudo install -m 0755 "$src" "$dst"
     log "Installed update-zap command: $dst (run: update-zap)"
@@ -533,7 +544,10 @@ if [ -n "$API_KEY" ]; then
         # guard below can warn and continue: an empty $merged must never
         # reach secret-tool, or it would wipe every other provider's key
         # under the same service.
-        merged=$(printf '%s' "$existing" | jq --arg id "$KEY_PROVIDER_ID" --arg k "$API_KEY" '. + {($id): $k}' 2>/dev/null || true)
+        # The key reaches jq through its environment (env.ZAP_K), never `--arg`:
+        # argv is world-readable in /proc/<pid>/cmdline, environ is owner-only —
+        # the ct-* overlays hand it to us via sudo --preserve-env for that reason.
+        merged=$(printf '%s' "$existing" | ZAP_K="$API_KEY" jq --arg id "$KEY_PROVIDER_ID" '. + {($id): env.ZAP_K}' 2>/dev/null || true)
         if [ -z "$merged" ]; then
             warn "Refusing to write keyring: jq merge produced empty value (existing keyring entry is likely not valid JSON). Other providers' keys preserved."
         elif printf '%s' "$merged" | secret-tool store \
@@ -624,18 +638,43 @@ fi
 # command line. claude enforces any managed `strictKnownMarketplaces` policy
 # itself and exits non-zero when a foreign marketplace is prohibited, so each
 # call sits in an `if` (exempt from `set -e`) and a failure only warns, never
-# aborts the installer. Re-running is safe: `marketplace add` replaces the
-# same-named entry and `install` is a no-op when the plugin is already there.
+# aborts the installer. Re-running is safe but does NOT advance anything by
+# itself: a repeat `marketplace add` reports "already on disk" and leaves the
+# catalog as-is, and `install` is a no-op on an installed plugin — so a box
+# stayed on whatever version it first got ("the marketplace now offers 2.4.0
+# (installed: 2.2.0)"). Hence the explicit `marketplace update` (refresh the
+# catalog from GitHub) + `plugin update` (move to the catalog's version); both
+# are cheap no-ops when current ("already at the latest version"). A failed
+# catalog refresh only warns — `plugin update` still runs against the cached one. Every call goes through
+# claude_cli: stdin closed + output captured (claude subcommands can wedge after
+# success when stdout is a TTY and stdin is /dev/null — terminal-capability
+# probing) and a timeout with SIGKILL escalation, bounded above claude's own
+# 120s git-clone timeout so a slow first clone is not cut off.
+claude_cli() {
+    local secs="$1"; shift
+    timeout -k 15 "$secs" claude "$@" </dev/null 2>&1
+}
+# Last line of a claude_cli capture — claude's one-line verdict — minus the CR
+# its CRLF output carries.
+last_line() { local l="${1##*$'\n'}"; printf '%s' "${l%$'\r'}"; }
 if command -v claude &> /dev/null; then
     log "Detected claude CLI — registering the claude-code-warp plugin marketplace"
-    if claude plugin marketplace add warpdotdev/claude-code-warp; then
-        if claude plugin install warp@claude-code-warp; then
-            log "Installed the warp plugin (warp@claude-code-warp)"
+    if out=$(claude_cli 180 plugin marketplace add warpdotdev/claude-code-warp); then
+        if out=$(claude_cli 180 plugin install warp@claude-code-warp --scope user); then
+            out=$(claude_cli 180 plugin marketplace update claude-code-warp) \
+                || warn "Could not refresh the claude-code-warp marketplace catalog: $(last_line "$out")"
+            if out=$(claude_cli 180 plugin update warp@claude-code-warp --scope user); then
+                # Last line is claude's verdict: "updated from X to Y … Restart
+                # to apply" or "already at the latest version (Y)".
+                log "warp plugin (warp@claude-code-warp): $(last_line "$out")"
+            else
+                warn "warp plugin installed, but 'claude plugin update warp@claude-code-warp --scope user' failed: $(last_line "$out")"
+            fi
         else
-            warn "Added the marketplace but 'claude plugin install warp@claude-code-warp' failed — install it later with /plugin"
+            warn "Added the marketplace but 'claude plugin install warp@claude-code-warp' failed — install it later with /plugin. Output: $(last_line "$out")"
         fi
     else
-        warn "Could not add the claude-code-warp marketplace (a managed claude policy may prohibit foreign marketplaces) — skipping"
+        warn "Could not add the claude-code-warp marketplace (a managed claude policy may prohibit foreign marketplaces) — skipping. Output: $(last_line "$out")"
     fi
 fi
 

@@ -35,21 +35,11 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # apt-get wrapper with a lock timeout so a boot-time apt job (apt-daily,
 # unattended-upgrades) holding the lock delays rather than fails the update.
-# Copied from linux/common.sh's apt_get (adapted from linux-setup.sh:228-242;
-# the sudo env form is required — see the note in common.sh) — keep in sync.
-# FORCE_MODE/NO_MODE are pinned false (this script has no unattended mode,
-# and pinning stops an exported env var from silently switching apt to
-# conffile-forcing mode), so the interactive branch always runs.
-FORCE_MODE=false
-NO_MODE=false
+# Interactive-only cut of linux/common.sh's apt_get (adapted from
+# linux-setup.sh:228-242): this script has no unattended mode, so only the
+# plain `sudo apt-get -o DPkg::Lock::Timeout=300` form exists here.
 apt_get() {
-    if [[ "$FORCE_MODE" == "true" || "$NO_MODE" == "true" ]]; then
-        sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get \
-            -o DPkg::Lock::Timeout=300 \
-            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
-    else
-        sudo apt-get -o DPkg::Lock::Timeout=300 "$@"
-    fi
+    sudo apt-get -o DPkg::Lock::Timeout=300 "$@"
 }
 
 # Refresh the APT index once before the install so the .deb's dependencies
