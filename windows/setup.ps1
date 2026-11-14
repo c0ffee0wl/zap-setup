@@ -736,6 +736,8 @@ function Add-AzureProviderToSettings {
     #
     # The model fields are identical to both provider blocks in
     # linux/configs/settings.toml (the reference copy) - bump them together.
+    # context_window is the TOTAL window (input + output), not the input
+    # limit - see the reference copy's comment before "fixing" it to 922000.
     $body = @"
 [agents.warp_agent]
 providers = [

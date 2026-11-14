@@ -142,8 +142,16 @@ show_block_dividers = false
 # rewrites the file on first save. Keys are alphabetized for the same reason.
 #
 # Per-model capability metadata (AgentProviderModel, app/src/settings/ai.rs):
-# context_window / max_output_tokens are token budgets (0 = unknown);
-# reasoning enables CoT; image/pdf/audio are tri-state force flags
+# context_window / max_output_tokens are token budgets (0 = unknown).
+# context_window is the TOTAL window (input + output), models.dev's
+# `limit.context` — NOT the input limit. gpt-6.1-terra takes 922,000 input +
+# 128,000 output = 1,050,000. Zap's compaction (byop_compaction/overflow.rs,
+# ported from opencode) derives the usable input as context_window -
+# max_output_tokens = exactly 922,000; "correcting" context_window to 922000
+# would make that 794,000. (As of zap 8954864 the value only drives the
+# "X% context" footer — auto-compaction still uses a built-in 200K fallback,
+# and max_output_tokens is not sent upstream — but keep the pair right for
+# when Zap wires them through.) reasoning enables CoT; image/pdf/audio are tri-state force flags
 # (present = override models.dev inference, absent = auto). tool_call
 # defaults to true, so it's omitted.
 #
